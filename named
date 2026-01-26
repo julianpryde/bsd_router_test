@@ -1,0 +1,22 @@
+options {
+    directory "/var/db/bind";
+
+    listen-on { 127.0.0.1; };
+    listen-on-v6 { ::1; };
+
+    allow-query { 127.0.0.1; 192.168.0.0/16; 2001:db8:1::/64; };
+    recursion yes;
+    dnssec-validation auto;
+
+    // DNS64 synthesis for IPv4-only destinations
+    dns64 64:ff9b::/96 {
+        clients { any; };
+        mapped { !10/8; !172.16/12; !192.168/16; any; };
+    };
+
+    forwarders {
+        2001:4860:4860::8888;
+        8.8.8.8;
+    };
+    forward only;
+};
