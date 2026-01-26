@@ -1,0 +1,22 @@
+#!/bin/sh
+
+# PROVIDE: tayga
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="tayga"
+rcvar="tayga_enable"
+
+load_rc_config $name
+
+: ${tayga_enable:="NO"}
+: ${tayga_conf:="/usr/local/etc/tayga.conf"}
+: ${tayga_flags:=""}
+
+command="/usr/local/sbin/tayga"
+pidfile="/var/run/${name}.pid"
+command_args="-c ${tayga_conf} --pidfile ${pidfile} ${tayga_flags}"
+
+run_rc_command "$1"
