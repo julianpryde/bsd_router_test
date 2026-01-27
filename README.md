@@ -3,10 +3,21 @@ The purpose of this project is to test features for the bsd_router_complex envir
 
 # Architecture
 For the purposes of testing, these configuration files will be applied to FreeBSD router running in VMWare workstation pro.  There are three interfaces on the router:
-1. WAN -> connected to my VMWare NAT VMNet
-2. LAN -> serving a stateful DHCPv6 server to clients with dnsmasq.  I chose to use a stateful DHCPv6 server for security.
+1. WAN -> interface em0, connected to my VMWare NAT VMNet
+2. LAN -> serving a dual-stack network with DHCPv4 for IPv4 addressing and IPv6 SLAAC for stateless IPv6 auto-configuration. Clients receive both IPv4 and IPv6 addresses. Right now, I only have one client connected, a Kali linux VM connected to the same LAN segment as my LAN interface (em1)
 3. mgmt -> in place for future testing to boot the router from a simulated raspberry pi using PXEboot. My pf rules are very careful to only allow tftp traffic on this interface.
 
 I am running a pf firewall to control the flow of traffic through the router.
 
-As VMWare workstation pro doesn't natively support handing out ipv6 addresses to guests, the WAN interface must only support ipv4 communications, necessitating a NAT64 router.  I am using Tayga for this function.  While I will be able to communicate using ipv6 on the production environment in bsd_router_complex, this will help communicate with ipv4-only websites.
+The router operates as a traditional dual-stack router:
+- IPv4 traffic from LAN clients (192.168.1.0/24) is NATed to the WAN interface
+- IPv6 traffic from LAN clients (2001:db8:1::/64) is routed natively without NAT
+- Both protocols are treated independently according to their native characteristics
+
+# Update Process
+I am not using the configuration files stored here, I am copying them into my testing environment as such:
+dnsmasq.conf -> /usr/local/etc/dnsmasq.conf
+named -> /usr/local/etc/namedb/named.conf
+pf.conf -> /etc/pf.conf
+rc.conf -> /etc/rc.conf
+tayga.conf -> /usr/local/etc/tayga.conf
