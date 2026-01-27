@@ -3,7 +3,7 @@
 ## Prerequisites
 1. FreeBSD router VM with 3 network interfaces (em0, em1, em2)
 2. Debian VM (or Raspberry Pi) with 1 network interface
-3. em2 on router connected to eth0 on Debian VM (same network segment)
+3. em2 on router connected to ens34 on Debian VM (same network segment)
 
 ## Setup Steps
 
@@ -17,7 +17,7 @@
 
 2. **Verify network configuration**:
    ```bash
-   ip addr show eth0
+   ip addr show ens34
    # Should show: 192.168.100.1/24
    ```
 
@@ -121,7 +121,7 @@ ls -l pxelinux.0
 4. **Monitor Debian VM**:
    ```bash
    sudo journalctl -u dnsmasq -f
-   sudo tcpdump -i eth0 port 69  # Watch TFTP traffic
+   sudo tcpdump -i ens34 port 69  # Watch TFTP traffic
    ```
 
 ## Expected Behavior
@@ -129,10 +129,10 @@ ls -l pxelinux.0
 ### Successful DHCP Test
 ```
 # On Debian VM logs:
-dnsmasq-dhcp[PID]: DHCPDISCOVER(eth0) 00:xx:xx:xx:xx:xx
-dnsmasq-dhcp[PID]: DHCPOFFER(eth0) 192.168.100.2 00:xx:xx:xx:xx:xx
-dnsmasq-dhcp[PID]: DHCPREQUEST(eth0) 192.168.100.2 00:xx:xx:xx:xx:xx
-dnsmasq-dhcp[PID]: DHCPACK(eth0) 192.168.100.2 00:xx:xx:xx:xx:xx
+dnsmasq-dhcp[PID]: DHCPDISCOVER(ens34) 00:xx:xx:xx:xx:xx
+dnsmasq-dhcp[PID]: DHCPOFFER(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
+dnsmasq-dhcp[PID]: DHCPREQUEST(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
+dnsmasq-dhcp[PID]: DHCPACK(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
 ```
 
 ### Successful TFTP Test
@@ -145,7 +145,7 @@ dnsmasq-tftp[PID]: sent /srv/tftp/pxelinux.0 to 192.168.100.2
 
 ### Router can't reach 192.168.100.1
 - Check physical connection between em2 and Debian VM
-- Verify Debian VM has IP: `ip addr show eth0`
+- Verify Debian VM has IP: `ip addr show ens34`
 - Check pf firewall: `pfctl -sr | grep em2`
 
 ### No DHCP response

@@ -28,7 +28,8 @@ sudo apt install -y dnsmasq pxelinux syslinux-common
 
 ### Apply Configuration Files
 ```bash
-sudo cp interfaces /etc/network/interfaces
+sudo mkdir -p /etc/network/interfaces.d
+sudo cp interfaces /etc/network/interfaces.d/pxe-boot
 sudo cp dnsmasq.conf /etc/dnsmasq.conf
 sudo systemctl restart networking
 sudo systemctl restart dnsmasq

@@ -1,13 +1,9 @@
 # Network configuration for Debian PXE boot server
-# Copy to /etc/network/interfaces
-
-# Loopback interface
-auto lo
-iface lo inet loopback
+# Copy to /etc/network/interfaces.d/pxe-boot
 
 # Primary network interface connected to router's em2 (mgmt)
-auto eth0
-iface eth0 inet static
+auto ens34
+iface ens34 inet static
     address 192.168.100.1
     netmask 255.255.255.0
     # No gateway needed - this is an isolated boot network

@@ -19,8 +19,8 @@ apt install -y dnsmasq pxelinux syslinux-common
 
 echo
 echo "Step 2: Backing up existing configuration..."
-if [ -f /etc/network/interfaces ]; then
-    cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%Y%m%d_%H%M%S)
+if [ -f /etc/network/interfaces.d/pxe-boot ]; then
+    cp /etc/network/interfaces.d/pxe-boot /etc/network/interfaces.d/pxe-boot.bak.$(date +%Y%m%d_%H%M%S)
 fi
 if [ -f /etc/dnsmasq.conf ]; then
     cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak.$(date +%Y%m%d_%H%M%S)
@@ -28,7 +28,8 @@ fi
 
 echo
 echo "Step 3: Copying configuration files..."
-cp interfaces /etc/network/interfaces
+mkdir -p /etc/network/interfaces.d
+cp interfaces /etc/network/interfaces.d/pxe-boot
 cp dnsmasq.conf /etc/dnsmasq.conf
 
 echo
@@ -53,7 +54,7 @@ echo
 echo "=== Setup Complete ==="
 echo
 echo "Next steps:"
-echo "1. Verify network configuration: ip addr show eth0"
+echo "1. Verify network configuration: ip addr show ens34"
 echo "2. Check dnsmasq status: systemctl status dnsmasq"
 echo "3. Place FreeBSD boot files in /srv/tftp/"
 echo "4. Connect this system to the router's em2 interface"
