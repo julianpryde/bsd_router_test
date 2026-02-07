@@ -5,3 +5,4 @@ dnscrypt-proxy.toml
 blocklist.txt
 setup.sh
 update_blocklists.sh
+restore_from_backup.sh
