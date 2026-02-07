@@ -18,6 +18,16 @@ backup_file() {
   fi
 }
 
+create_dnscrypt_proxy_user() {
+  echo "Creating _dnscrypt-proxy user..."
+  if ! id _dnscrypt-proxy >/dev/null 2>&1; then
+    pw useradd _dnscrypt-proxy -d /nonexistent -s /usr/sbin/nologin -c "dnscrypt-proxy user"
+    echo "_dnscrypt-proxy user created"
+  else
+    echo "_dnscrypt-proxy user already exists"
+  fi
+}
+
 install_packages() {
   echo "Updating package repo..."
   pkg update -f
@@ -114,6 +124,7 @@ start_services() {
 
 main() {
   require_root
+  create_dnscrypt_proxy_user
   install_packages
   install_dnscrypt_proxy
   copy_configs
