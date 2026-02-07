@@ -134,6 +134,8 @@ update_blocklists() {
 
 start_services() {
   echo "Starting services..."
+  service netif start || true
+  service routing restart || true
   service pf restart || true
   service dnscrypt_proxy restart || true
   service dnsmasq restart || true
