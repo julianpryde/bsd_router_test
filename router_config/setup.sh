@@ -29,11 +29,28 @@ create_dnscrypt_proxy_user() {
 }
 
 install_packages() {
+  echo "Checking required packages..."
+  
+  MISSING_PACKAGES=""
+  
+  if ! pkg info dnsmasq >/dev/null 2>&1; then
+    MISSING_PACKAGES="$MISSING_PACKAGES dnsmasq"
+  fi
+  
+  if ! pkg info ca_root_nss >/dev/null 2>&1; then
+    MISSING_PACKAGES="$MISSING_PACKAGES ca_root_nss"
+  fi
+  
+  if [ -z "$MISSING_PACKAGES" ]; then
+    echo "All required packages are already installed"
+    return 0
+  fi
+  
   echo "Updating package repo..."
   pkg update -f
 
-  echo "Installing required packages..."
-  pkg install -y dnsmasq ca_root_nss
+  echo "Installing required packages:$MISSING_PACKAGES"
+  pkg install -y $MISSING_PACKAGES
 }
 
 install_dnscrypt_proxy() {
