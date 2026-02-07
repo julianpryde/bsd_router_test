@@ -32,18 +32,18 @@ install_dnscrypt_proxy() {
   mkdir -p "$TEMP_DIR"
   cd "$TEMP_DIR"
 
-  # Fetch the latest dnscrypt-proxy release for FreeBSD x86_64
+  # Fetch the latest dnscrypt-proxy release for FreeBSD amd64
   # Adjust the version/platform as needed
   RELEASE_URL="https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.15/dnscrypt-proxy-freebsd_amd64-2.1.15.tar.gz"
   
   echo "Downloading from $RELEASE_URL..."
   if fetch -q "$RELEASE_URL"; then
     echo "Extracting..."
-    tar xzf dnscrypt-proxy-freebsd_x86_64-*.tar.gz
+    tar xzf dnscrypt-proxy-freebsd_amd64-*.tar.gz
     
-    if [ -f "dnscrypt-proxy/dnscrypt-proxy" ]; then
+    if [ -f "freebsd-amd64/dnscrypt-proxy" ]; then
       echo "Installing binary..."
-      install -m 755 dnscrypt-proxy/dnscrypt-proxy /usr/local/sbin/
+      install -m 755 freebsd-amd64/dnscrypt-proxy /usr/local/sbin/
       echo "dnscrypt-proxy installed to /usr/local/sbin/dnscrypt-proxy"
     else
       echo "ERROR: dnscrypt-proxy binary not found in archive" >&2
