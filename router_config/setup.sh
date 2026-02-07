@@ -100,6 +100,11 @@ copy_configs() {
   chmod 750 /var/log/dnscrypt-proxy
 }
 
+update_blocklists() {
+  echo "Updating blocklists..."
+  /usr/local/sbin/update_blocklists.sh
+}
+
 start_services() {
   echo "Starting services..."
   service pf restart || true
@@ -112,6 +117,7 @@ main() {
   install_packages
   install_dnscrypt_proxy
   copy_configs
+  update_blocklists
   start_services
   echo "Setup complete. Review /etc/rc.conf and /etc/pf.conf before rebooting."
 }
