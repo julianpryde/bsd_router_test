@@ -29,6 +29,14 @@ create_dnscrypt_proxy_user() {
 }
 
 install_packages() {
+  if ! command -v pkg >/dev/null 2>&1; then
+    echo "Bootstrapping pkg..."
+    env ASSUME_ALWAYS_YES=yes pkg bootstrap
+  elif ! pkg -N >/dev/null 2>&1; then
+    echo "Bootstrapping pkg..."
+    env ASSUME_ALWAYS_YES=yes pkg bootstrap
+  fi
+
   echo "Checking required packages..."
   
   MISSING_PACKAGES=""
