@@ -23,7 +23,40 @@ install_packages() {
   pkg update -f
 
   echo "Installing required packages..."
-  pkg install -y dnsmasq dnscrypt-proxy ca_root_nss
+  pkg install -y dnsmasq ca_root_nss
+}
+
+install_dnscrypt_proxy() {
+  echo "Installing dnscrypt-proxy from GitHub..."
+  TEMP_DIR="/tmp/dnscrypt-proxy-install-$$"
+  mkdir -p "$TEMP_DIR"
+  cd "$TEMP_DIR"
+
+  # Fetch the latest dnscrypt-proxy release for FreeBSD x86_64
+  # Adjust the version/platform as needed
+  RELEASE_URL="https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.15/dnscrypt-proxy-freebsd_amd64-2.1.15.tar.gz"
+  
+  echo "Downloading from $RELEASE_URL..."
+  if fetch -q "$RELEASE_URL"; then
+    echo "Extracting..."
+    tar xzf dnscrypt-proxy-freebsd_x86_64-*.tar.gz
+    
+    if [ -f "dnscrypt-proxy/dnscrypt-proxy" ]; then
+      echo "Installing binary..."
+      install -m 755 dnscrypt-proxy/dnscrypt-proxy /usr/local/sbin/
+      echo "dnscrypt-proxy installed to /usr/local/sbin/dnscrypt-proxy"
+    else
+      echo "ERROR: dnscrypt-proxy binary not found in archive" >&2
+      rm -rf "$TEMP_DIR"
+      return 1
+    fi
+  else
+    echo "ERROR: Failed to download dnscrypt-proxy" >&2
+    rm -rf "$TEMP_DIR"
+    return 1
+  fi
+  
+  rm -rf "$TEMP_DIR"
 }
 
 copy_configs() {
@@ -56,6 +89,15 @@ copy_configs() {
 
   # dnscrypt-proxy logs
   mkdir -p /var/log/dnscrypt-proxy
+
+  # Set ownership and permissions for dnscrypt-proxy user
+  chown -R _dnscrypt-proxy:_dnscrypt-proxy /usr/local/etc/dnscrypt-proxy
+  chmod 750 /usr/local/etc/dnscrypt-proxy
+  chmod 640 /usr/local/etc/dnscrypt-proxy/*.toml
+  chmod 640 /usr/local/etc/dnscrypt-proxy/blocklist.txt
+
+  chown -R _dnscrypt-proxy:_dnscrypt-proxy /var/log/dnscrypt-proxy
+  chmod 750 /var/log/dnscrypt-proxy
 }
 
 start_services() {
@@ -68,6 +110,7 @@ start_services() {
 main() {
   require_root
   install_packages
+  install_dnscrypt_proxy
   copy_configs
   start_services
   echo "Setup complete. Review /etc/rc.conf and /etc/pf.conf before rebooting."

@@ -73,7 +73,7 @@ cache_size = 4096
 ignore_system_dns = true
 
 # User to run as (for security)
-# user_name = "_dnscrypt-proxy"
+user_name = "_dnscrypt-proxy"
 
 # PID file
 pid_file = "/var/run/dnscrypt-proxy.pid"
