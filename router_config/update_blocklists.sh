@@ -38,7 +38,7 @@ log "Starting blocklist update..."
 HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
 
 log "Downloading Steven Black's hosts list..."
-if curl -f -s -L "$HOSTS_URL" -o "${TEMP_DIR}/hosts.txt" 2>/dev/null; then
+if fetch -q -o "${TEMP_DIR}/hosts.txt" "$HOSTS_URL"; then
   log "Downloaded successfully"
   
   # Convert hosts format to domain-only format
@@ -61,11 +61,11 @@ fi
 
 # Adaway list
 # log "Downloading Adaway list..."
-# curl -f -s -L "https://adaway.org/hosts.txt" -o "${TEMP_DIR}/adaway.txt" 2>/dev/null || true
+# fetch -q -o "${TEMP_DIR}/adaway.txt" "https://adaway.org/hosts.txt" || true
 
 # Peter Lowe's Ad Server List
 log "Downloading Peter Lowe's Ad Server list..."
-if curl -f -s -L "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts" -o "${TEMP_DIR}/pgl.txt" 2>/dev/null; then
+if fetch -q -o "${TEMP_DIR}/pgl.txt" "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts"; then
   cat "${TEMP_DIR}/pgl.txt" | \
     grep -v '^[[:space:]]*#' | \
     grep -v '^[[:space:]]*$' | \
@@ -77,7 +77,7 @@ fi
 
 # MVPS hosts
 log "Downloading MVPS hosts..."
-if curl -f -s -L "http://winhelp2002.mvps.org/hosts.txt" -o "${TEMP_DIR}/mvps.txt" 2>/dev/null; then
+if fetch -q -o "${TEMP_DIR}/mvps.txt" "http://winhelp2002.mvps.org/hosts.txt"; then
   cat "${TEMP_DIR}/mvps.txt" | \
     grep -v '^[[:space:]]*#' | \
     grep -v '^[[:space:]]*$' | \
