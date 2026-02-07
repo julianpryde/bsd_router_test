@@ -1,6 +1,17 @@
 # Purpose
 The purpose of this project is to test features for the bsd_router_complex environment.   That project contains configuration files for a FreeBSD router running on a micro form factor Dell OptiPlex.
 
+# Motivation
+My home networking environment consists of iPhones, Windows computers, an XBox, Phillips Hue bulbs, and possibly android phones.  My most sensitive resources are:
+1. The personal information stored on my iPhones and Windows computers,
+2. The reputation of my ip address
+3. The compute resources of the computers on my network.
+
+The router should:
+1. Limit the ability for a malicious actor to gain initial access on my network through minimum-access-necessary firewall rules and eventually observability of anomalous traffic,
+2. Limit the persistence of any possible attackers on the router itself through frequent re-installs of the base operating system from a raspberry pi, and
+3. Limit the ability for an attacker on one network component to learn about the rest of the network through microsegmentatoin of network boundaries and encryption of network traffic to the maximum extent possible.
+
 # Architecture
 For the purposes of testing, these configuration files will be applied to FreeBSD router running in VMWare workstation pro.  There are three interfaces on the router:
 1. WAN -> interface em0, connected to my VMWare NAT VMNet
