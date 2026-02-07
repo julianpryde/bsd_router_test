@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 ##
 ## Convert Pi-hole blocklists to dnscrypt-proxy2 domain-only format
 ## 
