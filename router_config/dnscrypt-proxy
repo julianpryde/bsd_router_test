@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+# PROVIDE: dnscrypt_proxy
+# REQUIRE: NETWORK
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable dnscrypt-proxy:
+#
+# dnscrypt_proxy_enable="YES"
+# dnscrypt_proxy_config="/usr/local/etc/dnscrypt-proxy/dnscrypt-proxy.toml"
+#
+
+. /etc/rc.subr
+
+name="dnscrypt_proxy"
+rcvar=dnscrypt_proxy_enable
+desc="dnscrypt-proxy - encrypted DNS proxy"
+
+load_rc_config $name
+
+: ${dnscrypt_proxy_enable:="NO"}
+: ${dnscrypt_proxy_config:="/usr/local/etc/dnscrypt-proxy/dnscrypt-proxy.toml"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/local/sbin/dnscrypt-proxy"
+command_args="-config ${dnscrypt_proxy_config}"
+
+run_rc_command "$1"

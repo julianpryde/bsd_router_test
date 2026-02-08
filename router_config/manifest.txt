@@ -2,6 +2,7 @@ rc.conf
 pf.conf
 dnsmasq.conf
 dnscrypt-proxy.toml
+dnscrypt-proxy
 blocklist.txt
 setup.sh
 update_blocklists.sh

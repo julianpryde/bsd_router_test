@@ -111,6 +111,12 @@ copy_configs() {
   backup_file /usr/local/etc/dnsmasq.conf
   cp -p "${SCRIPT_DIR}/dnsmasq.conf" /usr/local/etc/dnsmasq.conf
 
+  # dnscrypt-proxy rc.d script
+  mkdir -p /usr/local/etc/rc.d
+  backup_file /usr/local/etc/rc.d/dnscrypt_proxy
+  cp -p "${SCRIPT_DIR}/dnscrypt-proxy" /usr/local/etc/rc.d/dnscrypt_proxy
+  chmod 755 /usr/local/etc/rc.d/dnscrypt_proxy
+
   # dnscrypt-proxy
   mkdir -p /usr/local/etc/dnscrypt-proxy
   backup_file /usr/local/etc/dnscrypt-proxy/dnscrypt-proxy.toml
