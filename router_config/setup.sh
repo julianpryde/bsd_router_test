@@ -15,6 +15,8 @@ backup_file() {
   target="$1"
   if [ -f "$target" ]; then
     cp -p "$target" "${target}.bak.${TIMESTAMP}"
+  else
+    echo "WARNING: $target does not exist, skipping backup" >&2
   fi
 }
 
@@ -140,13 +142,37 @@ update_blocklists() {
   /usr/local/sbin/update_blocklists.sh
 }
 
+wait_for_dhcp() {
+  echo "Waiting for DHCP to complete on em0..."
+  
+  # Explicitly request a new DHCP lease
+  dhclient em0 &
+  DHCP_PID=$!
+  
+  for i in 1 2 3 4 5; do
+    if ifconfig em0 | grep -q "inet "; then
+      echo "✓ em0 has obtained IP address: $(ifconfig em0 | grep "inet " | awk '{print $2}')"
+      wait $DHCP_PID 2>/dev/null || true
+      return 0
+    else
+      echo "  [$i/5] Waiting for DHCP... (em0 not yet configured)"
+      sleep 1
+    fi
+  done
+  
+  wait $DHCP_PID 2>/dev/null || true
+  echo "⚠ Warning: em0 may not have obtained IP address yet"
+}
+
 start_services() {
   echo "Starting services..."
-  service netif start || true
-  service routing restart || true
-  service pf restart || true
+  service routing stop || true
+  service netif restart || true
+  wait_for_dhcp
+  service routing start || true
   service dnscrypt_proxy restart || true
   service dnsmasq restart || true
+  service pf restart || true
 }
 
 main() {
