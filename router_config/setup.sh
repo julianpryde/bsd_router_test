@@ -148,6 +148,17 @@ update_blocklists() {
   /usr/local/sbin/update_blocklists.sh
 }
 
+download_resolver_list() {
+  echo "Downloading dnscrypt-proxy resolver list..."
+  mkdir -p /var/cache/dnscrypt-proxy
+  if fetch -q -o /var/cache/dnscrypt-proxy/public-resolvers.md "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md"; then
+    fetch -q -o /var/cache/dnscrypt-proxy/public-resolvers.md.minisig "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md.minisig"
+    echo "Resolver list downloaded successfully"
+  else
+    echo "WARNING: Failed to download resolver list. dnscrypt-proxy will download on first start." >&2
+  fi
+}
+
 wait_for_dhcp() {
   echo "Waiting for DHCP to complete on em0..."
   
@@ -188,6 +199,7 @@ main() {
   install_dnscrypt_proxy
   copy_configs
   update_blocklists
+  download_resolver_list
   start_services
   echo "Setup complete. Review /etc/rc.conf and /etc/pf.conf before rebooting."
 }
