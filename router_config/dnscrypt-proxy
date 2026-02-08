@@ -22,7 +22,7 @@ load_rc_config $name
 : ${dnscrypt_proxy_config:="/usr/local/etc/dnscrypt-proxy/dnscrypt-proxy.toml"}
 
 pidfile="/var/run/${name}.pid"
-command="/usr/local/sbin/dnscrypt-proxy"
-command_args="-config ${dnscrypt_proxy_config}"
+command="/usr/sbin/daemon"
+command_args="-P ${pidfile} -r -t ${name} /usr/local/sbin/dnscrypt-proxy -config ${dnscrypt_proxy_config}"
 
 run_rc_command "$1"
