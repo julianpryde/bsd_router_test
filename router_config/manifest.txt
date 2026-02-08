@@ -7,3 +7,4 @@ blocklist.txt
 setup.sh
 update_blocklists.sh
 restore_from_backup.sh
+cleanup_backups.sh

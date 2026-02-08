@@ -5,63 +5,24 @@
 # Server listening address - localhost only (redirected by pf)
 listen_addresses = ["127.0.0.1:5353"]
 
-# Upstream DNS servers (Cloudflare DoH with blocklist support)
-[upstream_servers."cloudflare"]
-  urls = ["https://1.1.1.1/dns-query"]
-  tls_servername = "cloudflare-dns.com"
-
-[upstream_servers."cloudflare-malware"]
-  urls = ["https://1.1.1.2/dns-query"]
-  tls_servername = "cloudflare-dns.com"
-
-# Using Cloudflare's safe browsing + malware protection
-# Primary upstream
-[upstream_servers."primary"]
-  urls = ["https://1.1.1.1/dns-query", "https://1.1.1.2/dns-query"]
-  tls_servername = "cloudflare-dns.com"
-
-# Configure which upstream to use
-# Use the malware-filtered version for all queries
-upstream_servers = ["primary"]
+# Upstream DNS servers - use Cloudflare's public resolvers
+server_names = ["cloudflare", "cloudflare-ipv6"]
 
 # Timeout for upstream queries (milliseconds)
 timeout = 5000
 keepalive = 30
 
-##
-## Domain Blocklists (Pi-hole compatible)
-##
+# Use servers reachable over IPv4
+ipv4_servers = true
 
-# Enable blocklist loading
-[blocked_names]
-  # Load blocklist from file (convert from hosts format)
-  blocked_names_file = "/usr/local/etc/dnscrypt-proxy/blocklist.txt"
-  
-  # Log blocked queries
-  log_file = "/var/log/dnscrypt-proxy/blocked.log"
-  log_format = "tsv"
+# Use servers reachable over IPv6
+ipv6_servers = false
 
-##
-## Query Logging
-##
+# Use servers implementing the DNSCrypt protocol
+dnscrypt_servers = true
 
-# Log all DNS queries
-[query_log]
-  file = "/var/log/dnscrypt-proxy/query.log"
-  format = "tsv"
-
-##
-## Advanced Options
-##
-
-# Require IPv6 records to be returned from upstream
-require_dnssec = false
-
-# DNSSEC validation
-dnssec_validation = false
-
-# Disable IPv6 records (to prefer IPv4)
-disable_ipv6 = true
+# Use servers implementing the DNS-over-HTTPS protocol
+doh_servers = true
 
 # Cache results
 cache = true
@@ -72,22 +33,30 @@ cache_size = 4096
 # Ignore system resolv.conf
 ignore_system_dns = true
 
-# User to run as (for security)
-user_name = "_dnscrypt-proxy"
-
-# PID file
-pid_file = "/var/run/dnscrypt-proxy.pid"
-
-# Log file level
-log_level = 2
-log_file = "/var/log/dnscrypt-proxy/dnscrypt-proxy.log"
-use_syslog = false
-
 ##
-## Cloaking Rules (optional: return specific IPs for domains)
-## Uncomment if you want to block specific domains locally
+## Sources - Download public resolver lists
 ##
 
-# [cloaking_rules]
-#   # Block ads.example.com by returning 0.0.0.0
-#   "ads.example.com" = "0.0.0.0"
+[sources]
+
+  [sources.'public-resolvers']
+  urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/public-resolvers.md', 'https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md']
+  cache_file = 'public-resolvers.md'
+  minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
+  refresh_delay = 72
+
+##
+## Domain Blocklists (Pi-hole compatible)
+##
+
+[blocked_names]
+  # Load blocklist from file (convert from hosts format)
+  blocked_names_file = "/usr/local/etc/dnscrypt-proxy/blocklist.txt"
+
+##
+## Query Logging
+##
+
+[query_log]
+  file = "/var/log/dnscrypt-proxy/query.log"
+  format = "tsv"
