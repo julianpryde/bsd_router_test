@@ -1,0 +1,101 @@
+[
+  {
+    "name": "Philips Hue Bridge",
+    "manufacturer": "Philips",
+    "model": "Hue Bridge v2",
+    "category": "smart_lighting",
+    "mac_prefixes": ["001788", "ECFABC"],
+    "hostnames": ["philips-hue", "hue-bridge"],
+    "dhcp_fingerprints": [],
+    "allowed_domains": [
+      "*.meethue.com",
+      "firmware.meethue.com",
+      "api.meethue.com"
+    ],
+    "required_ports": [80, 443, 5353, 1900, 2100],
+    "data_source": "manual",
+    "confidence": 1.0,
+    "metadata": {
+      "vendor_url": "https://www.philips-hue.com",
+      "requires_cloud": true,
+      "local_control": true
+    }
+  },
+  {
+    "name": "Google Home Speaker",
+    "manufacturer": "Google",
+    "model": "Google Home",
+    "category": "smart_speaker",
+    "mac_prefixes": ["F4F5D8", "6C5697"],
+    "hostnames": ["google-home", "googlehome"],
+    "dhcp_fingerprints": [],
+    "allowed_domains": [
+      "*.google.com",
+      "*.googleapis.com",
+      "*.gstatic.com"
+    ],
+    "required_ports": [443, 8008, 8009],
+    "data_source": "manual",
+    "confidence": 1.0,
+    "metadata": {
+      "vendor_url": "https://store.google.com",
+      "requires_cloud": true,
+      "local_control": false
+    }
+  },
+  {
+    "name": "Amazon Echo",
+    "manufacturer": "Amazon",
+    "model": "Echo",
+    "category": "smart_speaker",
+    "mac_prefixes": ["44650D", "F0D2F1", "FC65DE"],
+    "hostnames": ["amazon-echo", "echo"],
+    "dhcp_fingerprints": [],
+    "allowed_domains": [
+      "*.amazon.com",
+      "*.amazonaws.com",
+      "*.alexa.com"
+    ],
+    "required_ports": [443],
+    "data_source": "manual",
+    "confidence": 1.0,
+    "metadata": {
+      "vendor_url": "https://www.amazon.com/alexa",
+      "requires_cloud": true,
+      "local_control": false
+    }
+  },
+  {
+    "name": "ESP8266 IoT Device",
+    "manufacturer": "Espressif",
+    "model": "ESP8266",
+    "category": "generic_iot",
+    "mac_prefixes": ["286D97", "5CCF7F", "A4CF12", "2462AB"],
+    "hostnames": ["esp", "espressif"],
+    "dhcp_fingerprints": [],
+    "allowed_domains": [],
+    "required_ports": [80, 443],
+    "data_source": "manual",
+    "confidence": 0.8,
+    "metadata": {
+      "note": "Generic ESP8266 module, check for custom firmware",
+      "common_uses": ["sensors", "switches", "automation"]
+    }
+  },
+  {
+    "name": "Raspberry Pi",
+    "manufacturer": "Raspberry Pi Foundation",
+    "model": "Raspberry Pi",
+    "category": "sbc",
+    "mac_prefixes": ["B827EB", "DCA632", "E45F01"],
+    "hostnames": ["raspberrypi", "raspberry"],
+    "dhcp_fingerprints": [],
+    "allowed_domains": [],
+    "required_ports": [],
+    "data_source": "manual",
+    "confidence": 0.9,
+    "metadata": {
+      "note": "May be running various IoT applications"
+    }
+  }
+]

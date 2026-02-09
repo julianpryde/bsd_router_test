@@ -1,0 +1,7 @@
+# IoT Manager Requirements
+# No external dependencies required - uses only Python 3 standard library
+# Tested with Python 3.7+
+
+# Optional: For enhanced functionality
+# pyoui>=0.1.0  # For MAC address OUI lookups (optional)
+# requests>=2.25.0  # For downloading crowdsourced data (optional)
