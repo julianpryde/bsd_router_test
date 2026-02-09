@@ -10,3 +10,31 @@ desktop.ini
 *~
 .AppleDouble
 .LSOverride
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.old
+*.orig
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+.tmp/
