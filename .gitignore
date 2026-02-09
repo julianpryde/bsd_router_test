@@ -1,0 +1,12 @@
+# FreeBSD boot files
+pxe_boot_config/FreeBSD-15.0/
+
+# Metadata files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.AppleDouble
+.LSOverride
