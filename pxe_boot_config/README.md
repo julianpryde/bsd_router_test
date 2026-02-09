@@ -18,7 +18,27 @@ This folder contains configuration files for a Debian VM that provides PXE boot 
 3. Router downloads boot files via TFTP
 4. All other router services (WAN, LAN) operate independently through em0/em1
 
-## Installation on Debian/Raspberry Pi OS
+## Quick Start
+
+Run the automated setup script to configure the PXE boot server:
+
+```bash
+sudo bash setup.sh
+```
+
+This script will:
+- Install required packages (dnsmasq, pxelinux, syslinux-common)
+- Back up any existing configuration files
+- Apply network and DHCP/TFTP configuration
+- Create and populate the TFTP directory structure
+- Set appropriate file permissions
+- Start and enable the dnsmasq service
+
+After setup completes, follow the next steps displayed by the script.
+
+## Manual Installation (Alternative)
+
+If you prefer to configure manually instead of using `setup.sh`, follow these steps:
 
 ### Install Required Packages
 ```bash
@@ -41,16 +61,38 @@ sudo systemctl enable dnsmasq
 sudo mkdir -p /srv/tftp/pxelinux.cfg
 sudo cp /usr/lib/PXELINUX/pxelinux.0 /srv/tftp/
 sudo cp /usr/lib/syslinux/modules/bios/*.c32 /srv/tftp/
+sudo cp pxelinux.cfg.default /srv/tftp/pxelinux.cfg/default
+sudo chmod -R 755 /srv/tftp
+sudo chown -R root:root /srv/tftp
 ```
 
-### Add FreeBSD Boot Files
-Place FreeBSD boot files (pxeboot, kernel, etc.) in /srv/tftp/ and configure pxelinux.cfg/default accordingly.
-
 ## Files in This Directory
+- `setup.sh` - Automated setup script (recommended)
 - `interfaces` - Network configuration for Debian VM
 - `dnsmasq.conf` - DHCP and TFTP server configuration
-- `pxelinux.cfg/default` - PXE boot menu configuration (template)
+- `pxelinux.cfg.default` - PXE boot menu configuration
 - `README.md` - This file
+
+## Verification
+
+After setup, verify the installation:
+
+```bash
+# Check network configuration
+ip addr show
+
+# Check dnsmasq status
+systemctl status dnsmasq
+
+# Verify TFTP files are in place
+ls -la /srv/tftp/
+```
+
+## Next Steps
+
+1. Place FreeBSD boot files (pxeboot, kernel, etc.) in `/srv/tftp/`
+2. Connect this system to the router's em2 interface
+3. Test PXE boot from the router
 
 ## Notes
 - Uses Raspberry Pi OS defaults where applicable
