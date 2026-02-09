@@ -40,6 +40,22 @@ cp /usr/lib/syslinux/modules/bios/*.c32 /srv/tftp/
 cp pxelinux.cfg.default /srv/tftp/pxelinux.cfg/default
 
 echo
+echo "Step 4.1: Placing FreeBSD boot files (if available)..."
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+FREEBSD_BOOT_DIR="$SCRIPT_DIR/FreeBSD-15.0/boot"
+if [ -f "$FREEBSD_BOOT_DIR/pxeboot" ] && [ -f "$FREEBSD_BOOT_DIR/kernel/kernel" ]; then
+    cp "$FREEBSD_BOOT_DIR/pxeboot" /srv/tftp/pxeboot
+    cp "$FREEBSD_BOOT_DIR/kernel/kernel" /srv/tftp/kernel
+    if [ -f "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" ]; then
+        cp "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" /srv/tftp/kernel.symbols
+    fi
+    echo "FreeBSD boot files copied from $FREEBSD_BOOT_DIR"
+else
+    echo "FreeBSD boot files not found at $FREEBSD_BOOT_DIR"
+    echo "Place FreeBSD-15.0/boot/pxeboot and FreeBSD-15.0/boot/kernel/kernel next to setup.sh"
+fi
+
+echo
 echo "Step 5: Setting permissions..."
 chmod -R 755 /srv/tftp
 chown -R root:root /srv/tftp

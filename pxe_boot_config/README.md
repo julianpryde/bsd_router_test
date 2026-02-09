@@ -31,6 +31,7 @@ This script will:
 - Back up any existing configuration files
 - Apply network and DHCP/TFTP configuration
 - Create and populate the TFTP directory structure
+- Copy FreeBSD boot files into `/srv/tftp/` if `FreeBSD-15.0/boot/` is present next to `setup.sh`
 - Set appropriate file permissions
 - Start and enable the dnsmasq service
 
@@ -88,9 +89,60 @@ systemctl status dnsmasq
 ls -la /srv/tftp/
 ```
 
+## FreeBSD Boot Files
+
+After setup completes, the script will automatically place the FreeBSD boot files in `/srv/tftp/` if the directory `FreeBSD-15.0` exists next to `setup.sh`. If it is not present, you must place the files manually. These files are required for the router to boot from the network.
+
+### Required Files
+
+```
+/srv/tftp/
+├── pxeboot                 # FreeBSD PXE bootloader (REQUIRED)
+├── kernel                  # FreeBSD kernel (REQUIRED)
+├── kernel.symbols          # Kernel symbols (optional, for debugging)
+└── boot/
+    ├── kernel.gz           # Compressed kernel (optional alternative)
+    ├── mfsroot.gz          # Minimal filesystem (optional, for diskless boot)
+    └── device.hints        # Device configuration hints (optional)
+```
+
+### Obtaining Boot Files
+If you place the directory `FreeBSD-15.0` alongside setup.sh, the `setup.sh` script will automatically place them in their correct spot in `/srv/tftp/`.
+
+**Option 1: From an existing FreeBSD system**
+```bash
+# SSH to a FreeBSD system or copy from local installation
+cp /boot/pxeboot /srv/tftp/
+cp /boot/kernel/kernel /srv/tftp/
+cp /boot/kernel.symbols /srv/tftp/  # optional
+```
+
+**Option 2: From FreeBSD release media**
+1. Download a FreeBSD release ISO or memstick image from [freebsd.org](https://www.freebsd.org)
+2. Extract or mount the image
+3. Locate `boot/pxeboot` and `boot/kernel/kernel`
+4. Copy to `/srv/tftp/`
+
+### Set Permissions
+
+After placing the files, ensure correct permissions:
+
+```bash
+sudo chmod -R 755 /srv/tftp/
+sudo chown -R root:root /srv/tftp/
+```
+
+### Verification
+
+Verify all boot files are in place:
+
+```bash
+ls -la /srv/tftp/ | grep -E 'pxeboot|kernel'
+```
+
 ## Next Steps
 
-1. Place FreeBSD boot files (pxeboot, kernel, etc.) in `/srv/tftp/`
+1. Ensure FreeBSD boot files are in `/srv/tftp/` (the script copies them automatically if they arepresent)
 2. Connect this system to the router's em2 interface
 3. Test PXE boot from the router
 
