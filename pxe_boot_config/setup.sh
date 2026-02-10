@@ -15,7 +15,7 @@ fi
 
 echo "Step 1: Installing required packages..."
 apt update
-apt install -y dnsmasq pxelinux syslinux-common
+apt install -y dnsmasq
 
 echo
 echo "Step 2: Backing up existing configuration..."
@@ -34,26 +34,29 @@ cp dnsmasq.conf /etc/dnsmasq.conf
 
 echo
 echo "Step 4: Creating TFTP directory structure..."
-mkdir -p /srv/tftp/pxelinux.cfg
-cp /usr/lib/PXELINUX/pxelinux.0 /srv/tftp/
-cp /usr/lib/syslinux/modules/bios/*.c32 /srv/tftp/
-cp pxelinux.cfg.default /srv/tftp/pxelinux.cfg/default
+mkdir -p /srv/tftp
 
 echo
-echo "Step 4.1: Placing FreeBSD boot files (if available)..."
+echo "Step 4.1: Placing FreeBSD boot files..."
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 FREEBSD_BOOT_DIR="$SCRIPT_DIR/FreeBSD-15.0/boot"
-if [ -f "$FREEBSD_BOOT_DIR/pxeboot" ] && [ -f "$FREEBSD_BOOT_DIR/kernel/kernel" ]; then
-    cp "$FREEBSD_BOOT_DIR/pxeboot" /srv/tftp/pxeboot
-    cp "$FREEBSD_BOOT_DIR/kernel/kernel" /srv/tftp/kernel
-    if [ -f "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" ]; then
-        cp "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" /srv/tftp/kernel.symbols
-    fi
-    echo "FreeBSD boot files copied from $FREEBSD_BOOT_DIR"
-else
-    echo "FreeBSD boot files not found at $FREEBSD_BOOT_DIR"
-    echo "Place FreeBSD-15.0/boot/pxeboot and FreeBSD-15.0/boot/kernel/kernel next to setup.sh"
+if [ ! -f "$FREEBSD_BOOT_DIR/pxeboot" ]; then
+    echo "ERROR: FreeBSD pxeboot not found at $FREEBSD_BOOT_DIR/pxeboot"
+    echo "Ensure FreeBSD-15.0 directory exists with boot files"
+    exit 1
 fi
+if [ ! -f "$FREEBSD_BOOT_DIR/kernel/kernel" ]; then
+    echo "ERROR: FreeBSD kernel not found at $FREEBSD_BOOT_DIR/kernel/kernel"
+    exit 1
+fi
+
+cp "$FREEBSD_BOOT_DIR/pxeboot" /srv/tftp/pxeboot
+cp "$FREEBSD_BOOT_DIR/kernel/kernel" /srv/tftp/kernel
+if [ -f "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" ]; then
+    cp "$FREEBSD_BOOT_DIR/kernel/kernel.symbols" /srv/tftp/kernel.symbols
+fi
+cp loader.conf /srv/tftp/loader.conf
+echo "FreeBSD boot files copied from $FREEBSD_BOOT_DIR"
 
 echo
 echo "Step 5: Setting permissions..."
@@ -72,9 +75,10 @@ echo
 echo "Next steps:"
 echo "1. Verify network configuration: ip addr show ens34"
 echo "2. Check dnsmasq status: systemctl status dnsmasq"
-echo "3. Place FreeBSD boot files in /srv/tftp/"
+echo "3. Verify FreeBSD boot files: ls -la /srv/tftp/"
 echo "4. Connect this system to the router's em2 interface"
-echo "5. Test PXE boot from the router"
+echo "5. Configure router to PXE boot on em2 interface"
+echo "6. Test PXE boot from the router"
 echo
 echo "Network Configuration:"
 echo "  This server: 192.168.100.1"

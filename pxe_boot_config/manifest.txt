@@ -1,4 +1,4 @@
 dnsmasq.conf
 interfaces
-pxelinux.cfg.default
+loader.conf
 setup.sh

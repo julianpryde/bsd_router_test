@@ -27,11 +27,12 @@ sudo bash setup.sh
 ```
 
 This script will:
-- Install required packages (dnsmasq, pxelinux, syslinux-common)
+- Install required packages (dnsmasq)
 - Back up any existing configuration files
 - Apply network and DHCP/TFTP configuration
 - Create and populate the TFTP directory structure
-- Copy FreeBSD boot files into `/srv/tftp/` if `FreeBSD-15.0/boot/` is present next to `setup.sh`
+- Copy FreeBSD boot files from `FreeBSD-15.0/boot/` into `/srv/tftp/`
+- Copy FreeBSD bootloader configuration (`loader.conf`) to TFTP
 - Set appropriate file permissions
 - Start and enable the dnsmasq service
 
@@ -44,7 +45,7 @@ If you prefer to configure manually instead of using `setup.sh`, follow these st
 ### Install Required Packages
 ```bash
 sudo apt update
-sudo apt install -y dnsmasq pxelinux syslinux-common
+sudo apt install -y dnsmasq
 ```
 
 ### Apply Configuration Files
@@ -57,12 +58,13 @@ sudo systemctl restart dnsmasq
 sudo systemctl enable dnsmasq
 ```
 
-### Setup TFTP Directory Structure
+### Setup TFTP Directory and Copy FreeBSD Boot Files
 ```bash
-sudo mkdir -p /srv/tftp/pxelinux.cfg
-sudo cp /usr/lib/PXELINUX/pxelinux.0 /srv/tftp/
-sudo cp /usr/lib/syslinux/modules/bios/*.c32 /srv/tftp/
-sudo cp pxelinux.cfg.default /srv/tftp/pxelinux.cfg/default
+sudo mkdir -p /srv/tftp
+sudo cp FreeBSD-15.0/boot/pxeboot /srv/tftp/pxeboot
+sudo cp FreeBSD-15.0/boot/kernel/kernel /srv/tftp/kernel
+sudo cp FreeBSD-15.0/boot/kernel/kernel.symbols /srv/tftp/kernel.symbols
+sudo cp loader.conf /srv/tftp/loader.conf
 sudo chmod -R 755 /srv/tftp
 sudo chown -R root:root /srv/tftp
 ```
@@ -70,8 +72,11 @@ sudo chown -R root:root /srv/tftp
 ## Files in This Directory
 - `setup.sh` - Automated setup script (recommended)
 - `interfaces` - Network configuration for Debian VM
-- `dnsmasq.conf` - DHCP and TFTP server configuration
-- `pxelinux.cfg.default` - PXE boot menu configuration
+- `dnsmasq.conf` - DHCP and TFTP server configuration for FreeBSD PXE
+- `loader.conf` - FreeBSD bootloader configuration (copied to `/srv/tftp/loader.conf`)
+- `FreeBSD-15.0/` - FreeBSD boot files directory
+  - `boot/pxeboot` - FreeBSD PXE bootloader
+  - `boot/kernel/kernel` - FreeBSD kernel
 - `README.md` - This file
 
 ## Verification
@@ -91,60 +96,47 @@ ls -la /srv/tftp/
 
 ## FreeBSD Boot Files
 
-After setup completes, the script will automatically place the FreeBSD boot files in `/srv/tftp/` if the directory `FreeBSD-15.0` exists next to `setup.sh`. If it is not present, you must place the files manually. These files are required for the router to boot from the network.
+The setup script automatically copies FreeBSD boot files from the `FreeBSD-15.0` directory if it exists. These files are required for the router to PXE boot successfully.
 
-### Required Files
+### Required Files in /srv/tftp/
 
 ```
 /srv/tftp/
 ├── pxeboot                 # FreeBSD PXE bootloader (REQUIRED)
 ├── kernel                  # FreeBSD kernel (REQUIRED)
 ├── kernel.symbols          # Kernel symbols (optional, for debugging)
-└── boot/
-    ├── kernel.gz           # Compressed kernel (optional alternative)
-    ├── mfsroot.gz          # Minimal filesystem (optional, for diskless boot)
-    └── device.hints        # Device configuration hints (optional)
+└── loader.conf             # Boot loader configuration (REQUIRED)
 ```
 
-### Obtaining Boot Files
-If you place the directory `FreeBSD-15.0` alongside setup.sh, the `setup.sh` script will automatically place them in their correct spot in `/srv/tftp/`.
+### File Requirements
 
-**Option 1: From an existing FreeBSD system**
-```bash
-# SSH to a FreeBSD system or copy from local installation
-cp /boot/pxeboot /srv/tftp/
-cp /boot/kernel/kernel /srv/tftp/
-cp /boot/kernel.symbols /srv/tftp/  # optional
-```
+- **pxeboot** (446K): The FreeBSD PXE bootloader that runs on the client
+- **kernel** (28M): The FreeBSD kernel image
+- **loader.conf**: Configuration file for the boot loader
 
-**Option 2: From FreeBSD release media**
-1. Download a FreeBSD release ISO or memstick image from [freebsd.org](https://www.freebsd.org)
-2. Extract or mount the image
-3. Locate `boot/pxeboot` and `boot/kernel/kernel`
-4. Copy to `/srv/tftp/`
+### Verifying Boot Files
 
-### Set Permissions
-
-After placing the files, ensure correct permissions:
+After running setup.sh, verify the files are in place:
 
 ```bash
-sudo chmod -R 755 /srv/tftp/
-sudo chown -R root:root /srv/tftp/
+sudo ls -lh /srv/tftp/ | grep -E 'pxeboot|kernel|loader.conf'
 ```
 
-### Verification
-
-Verify all boot files are in place:
-
-```bash
-ls -la /srv/tftp/ | grep -E 'pxeboot|kernel'
+You should see:
+```
+-r--r--r-- pxeboot (446K)
+-r--r--r-- kernel (28M)
+-r--r--r-- loader.conf
 ```
 
-## Next Steps
+### Boot Process Flow
 
-1. Ensure FreeBSD boot files are in `/srv/tftp/` (the script copies them automatically if they arepresent)
-2. Connect this system to the router's em2 interface
-3. Test PXE boot from the router
+1. Router sends PXE boot request on em2
+2. dnsmasq responds with pxeboot location
+3. Router downloads pxeboot via TFTP
+4. pxeboot loads and reads loader.conf
+5. pxeboot loads the kernel from /srv/tftp/kernel
+6. FreeBSD kernel boots and initializes the router
 
 ## Notes
 - Uses Raspberry Pi OS defaults where applicable
