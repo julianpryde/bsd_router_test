@@ -4,37 +4,45 @@
 This folder contains configuration files for a Debian VM that provides PXE boot functionality for the FreeBSD router. In production, this will be a Raspberry Pi connected to the router's em2 (mgmt) interface.
 
 ## Architecture
-- **Debian VM**: Provides TFTP server and DHCP for PXE booting (BIOS only)
+- **Debian VM**: Provides TFTP server (for pxeboot), NFS server (for kernel), and DHCP (PXE setup)
 - **Router Interface**: Connected to em2 (mgmt interface)
 - **Network**: 192.168.100.0/24
   - Debian VM: 192.168.100.1
   - Router (em2): 192.168.100.2
-- **Services**: DHCP (dnsmasq) and TFTP only
+- **Services**: 
+  - DHCP (dnsmasq) - provides IP and boot parameters
+  - TFTP (dnsmasq) - serves pxeboot bootloader
+  - NFS (nfs-kernel-server) - serves kernel and boot files
 - **Boot Mode**: BIOS PXE only (no UEFI support)
 
 ## Network Flow
 1. Router boots and sends DHCP discover on em2
-2. Debian VM responds with IP address and boot file location
-3. Router downloads boot files via TFTP
-4. All other router services (WAN, LAN) operate independently through em0/em1
+2. Debian VM responds with IP address, pxeboot filename, and NFS mount path
+3. Router downloads pxeboot via TFTP
+4. pxeboot mounts NFS and loads kernel and loader files
+5. Kernel boots from local ZFS storage (zfs:zroot/ROOT/default)
+6. All other router services (WAN, LAN) operate independently through em0/em1
 
 ## Quick Start
 
 Run the automated setup script to configure the PXE boot server:
 
 ```bash
-sudo bash setup.sh
+sudo bash setup.sh <remote_ip>
 ```
 
+Replace `<remote_ip>` with the IP of the host serving `FreeBSD-15.0/boot/` over HTTP on port 8080.
+
 This script will:
-- Install required packages (dnsmasq)
+- Install required packages (dnsmasq, nfs-kernel-server)
 - Back up any existing configuration files
-- Apply network and DHCP/TFTP configuration
-- Create and populate the TFTP directory structure
-- Copy FreeBSD boot files from `FreeBSD-15.0/boot/` into `/srv/tftp/`
-- Copy FreeBSD bootloader configuration (`loader.conf`) to TFTP
+- Apply network, DHCP, and NFS configuration
+- Create TFTP and NFS export directories
+- Copy FreeBSD boot files to both TFTP and NFS directories
+- Install custom loader.conf configured for ZFS root boot
+- Configure NFS exports for client access
 - Set appropriate file permissions
-- Start and enable the dnsmasq service
+- Start and enable dnsmasq and NFS services
 
 After setup completes, follow the next steps displayed by the script.
 
@@ -45,7 +53,7 @@ If you prefer to configure manually instead of using `setup.sh`, follow these st
 ### Install Required Packages
 ```bash
 sudo apt update
-sudo apt install -y dnsmasq
+sudo apt install -y dnsmasq nfs-kernel-server
 ```
 
 ### Apply Configuration Files
@@ -58,26 +66,43 @@ sudo systemctl restart dnsmasq
 sudo systemctl enable dnsmasq
 ```
 
-### Setup TFTP Directory and Copy FreeBSD Boot Files
+### Setup TFTP and NFS Directories and Copy Boot Files
 ```bash
 sudo mkdir -p /srv/tftp
-sudo cp FreeBSD-15.0/boot/pxeboot /srv/tftp/pxeboot
-sudo cp FreeBSD-15.0/boot/kernel/kernel /srv/tftp/kernel
-sudo cp FreeBSD-15.0/boot/kernel/kernel.symbols /srv/tftp/kernel.symbols
-sudo cp loader.conf /srv/tftp/loader.conf
+sudo mkdir -p /srv/nfs/freebsd
+
+# Copy pxeboot to TFTP root (for initial boot via TFTP)
+sudo cp FreeBSD-15.0/boot/pxeboot /srv/tftp/
+
+# Copy boot files to NFS export (for loader and kernel via NFS)
+sudo cp -r FreeBSD-15.0/boot /srv/nfs/freebsd/
+
+# Install custom loader.conf (configured for ZFS boot)
+sudo cp loader.conf /srv/nfs/freebsd/boot/loader.conf
+
+# Set permissions
 sudo chmod -R 755 /srv/tftp
-sudo chown -R root:root /srv/tftp
+sudo chmod -R 755 /srv/nfs
+sudo chown -R nobody:nogroup /srv/nfs/freebsd
+
+# Configure NFS export
+echo "/srv/nfs/freebsd 192.168.100.0/24(ro,sync,no_subtree_check)" | sudo tee -a /etc/exports
+sudo exportfs -ra
 ```
 
 ## Files in This Directory
 - `setup.sh` - Automated setup script (recommended)
 - `interfaces` - Network configuration for Debian VM
-- `dnsmasq.conf` - DHCP and TFTP server configuration for FreeBSD PXE
-- `loader.conf` - FreeBSD bootloader configuration (copied to `/srv/tftp/loader.conf`)
-- `FreeBSD-15.0/` - FreeBSD boot files directory
-  - `boot/pxeboot` - FreeBSD PXE bootloader
-  - `boot/kernel/kernel` - FreeBSD kernel
+- `dnsmasq.conf` - DHCP and TFTP server configuration
+- `loader.conf` - FreeBSD boot loader configuration (ZFS root boot)
 - `README.md` - This file
+- `NFS_SETUP.md` - Detailed NFS server configuration and troubleshooting
+- `TESTING.md` - Testing procedures
+- `FreeBSD-15.0/` - FreeBSD boot files (source directory)
+
+## Additional Documentation
+
+For detailed NFS configuration and troubleshooting, see [NFS_SETUP.md](NFS_SETUP.md).
 
 ## Verification
 
@@ -96,47 +121,56 @@ ls -la /srv/tftp/
 
 ## FreeBSD Boot Files
 
-The setup script automatically copies FreeBSD boot files from the `FreeBSD-15.0` directory if it exists. These files are required for the router to PXE boot successfully.
+The setup script downloads FreeBSD boot files from the remote HTTP server and sets up **NFS-based PXE boot with local ZFS root** storage.
 
-### Required Files in /srv/tftp/
+### Required Files
 
-```
-/srv/tftp/
-├── pxeboot                 # FreeBSD PXE bootloader (REQUIRED)
-├── kernel                  # FreeBSD kernel (REQUIRED)
-├── kernel.symbols          # Kernel symbols (optional, for debugging)
-└── loader.conf             # Boot loader configuration (REQUIRED)
-```
-
-### File Requirements
-
-- **pxeboot** (446K): The FreeBSD PXE bootloader that runs on the client
-- **kernel** (28M): The FreeBSD kernel image
-- **loader.conf**: Configuration file for the boot loader
+- **/srv/tftp/pxeboot**: First-stage PXE bootloader (TFTP)
+- **/srv/nfs/freebsd/boot/**: Complete boot directory (NFS)
+- **/srv/nfs/freebsd/boot/loader.conf**: Boot configuration for ZFS root
 
 ### Verifying Boot Files
 
 After running setup.sh, verify the files are in place:
 
 ```bash
-sudo ls -lh /srv/tftp/ | grep -E 'pxeboot|kernel|loader.conf'
+# TFTP directory (pxeboot only)
+sudo ls -lh /srv/tftp/
+
+# NFS export directory (kernel and loader files)
+sudo ls -lh /srv/nfs/freebsd/
+sudo ls -lh /srv/nfs/freebsd/boot/kernel/
+
+# Check NFS exports
+sudo showmount -e localhost
 ```
 
 You should see:
-```
--r--r--r-- pxeboot (446K)
--r--r--r-- kernel (28M)
--r--r--r-- loader.conf
-```
+- `pxeboot` in `/srv/tftp/`
+- Complete `boot/` directory structure in `/srv/nfs/freebsd/`
+- `boot/loader.conf` with ZFS boot configuration
+- `boot/kernel/kernel` available via NFS
 
-### Boot Process Flow
+### Boot Process Flow (NFS + Local ZFS Root)
 
 1. Router sends PXE boot request on em2
-2. dnsmasq responds with pxeboot location
-3. Router downloads pxeboot via TFTP
-4. pxeboot loads and reads loader.conf
-5. pxeboot loads the kernel from /srv/tftp/kernel
-6. FreeBSD kernel boots and initializes the router
+2. dnsmasq responds with:
+   - IP address (192.168.100.2)
+   - pxeboot filename (via TFTP)
+   - NFS root-path (/srv/nfs/freebsd)
+3. Router downloads pxeboot via TFTP (first-stage loader)
+4. pxeboot mounts NFS from 192.168.100.1:/srv/nfs/freebsd
+5. pxeboot chain-loads to loader_lua or loader_4th (second-stage, via NFS)
+6. Loader reads `/boot/loader.conf` (from NFS mount) for boot configuration
+7. Loader downloads kernel from `/boot/kernel/kernel` (via NFS)
+8. Kernel boots and mounts ZFS root filesystem (zfs:zroot/ROOT/default)
+9. FreeBSD boots with root mounted from local storage
+
+**Note:** The multi-stage boot process requires:
+- pxeboot (TFTP): Minimal first-stage bootloader
+- Complete boot/ directory structure (NFS): Including loader, scripts, and kernel
+- loader.conf configured for ZFS root mount
+- NFS export accessible to the booting client
 
 ## Notes
 - Uses Raspberry Pi OS defaults where applicable

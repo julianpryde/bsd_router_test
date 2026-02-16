@@ -12,8 +12,9 @@
 1. **Deploy configuration files**:
    ```bash
    cd debian-pxe-boot
-   sudo ./setup.sh
+   sudo ./setup.sh <remote_ip>
    ```
+   Replace `<remote_ip>` with the IP of the host serving `FreeBSD-15.0/boot/` over HTTP on port 8080.
 
 2. **Verify network configuration**:
    ```bash
@@ -27,10 +28,12 @@
    sudo journalctl -u dnsmasq -f  # Monitor logs
    ```
 
-4. **Verify TFTP directory**:
+4. **Verify TFTP and NFS directories**:
    ```bash
    ls -la /srv/tftp/
-   # Should contain: pxelinux.0, *.c32 files, pxelinux.cfg/
+   # Should contain: pxeboot only
+   ls -la /srv/nfs/freebsd/boot/kernel/
+   # Should contain: kernel file
    ```
 
 ### On the FreeBSD Router
@@ -84,23 +87,46 @@ You should see DHCP discover/offer/request/ack messages.
 
 ### Method 2: Test TFTP
 
-On the router:
+On the router (or any system on the network):
 ```bash
 # Install tftp client if needed
 pkg install tftp
 
-# Test TFTP download
+# Test TFTP download of pxeboot
 tftp 192.168.100.1
-tftp> get pxelinux.0
+tftp> get pxeboot
 tftp> quit
 
 # Verify file was downloaded
-ls -l pxelinux.0
+ls -l pxeboot
+file pxeboot  # Should show FreeBSD x86 bootloader
 ```
 
-### Method 3: Full PXE Boot Test
+### Method 3: Test NFS Export
 
-**IMPORTANT**: This requires FreeBSD boot files in `/srv/tftp/` on the Debian VM.
+On the router:
+```bash
+# Install nfs-utils if needed
+pkg install nfs-utils
+
+# List NFS exports from server
+showmount -e 192.168.100.1
+
+# Try mounting the NFS export
+sudo mkdir -p /mnt/test
+sudo mount -t nfs 192.168.100.1:/srv/nfs/freebsd /mnt/test
+
+# Verify you can access boot files
+ls -la /mnt/test/boot/
+ls -la /mnt/test/boot/kernel/kernel
+
+# Unmount
+sudo umount /mnt/test
+```
+
+### Method 4: Full PXE Boot Test
+
+**IMPORTANT**: This requires FreeBSD boot files in `/srv/tftp/` (pxeboot only) and `/srv/nfs/freebsd/` (boot directory) on the Debian VM (created by setup.sh).
 
 1. **Configure router BIOS/UEFI**:
    - Set boot order: Network boot first
@@ -114,31 +140,52 @@ ls -l pxelinux.0
 
 3. **Watch boot process**:
    - Router should send DHCP discover on em2
-   - Debian VM responds with IP and boot file
-   - Router downloads pxelinux.0 via TFTP
-   - PXE boot menu appears
+   - Debian VM responds with IP (192.168.100.2), pxeboot filename, and NFS root-path
+   - Router downloads pxeboot via TFTP
+   - pxeboot loads and mounts NFS
+   - pxeboot chain-loads to loader (via NFS)
+   - Loader reads loader.conf and loads kernel (via NFS)
+   - Kernel boots and mounts ZFS root from local storage
+   - FreeBSD initializes and router is ready
 
-4. **Monitor Debian VM**:
+4. **Monitor Debian VM** during boot:
    ```bash
+   # Terminal 1: Watch dnsmasq logs
    sudo journalctl -u dnsmasq -f
-   sudo tcpdump -i ens34 port 69  # Watch TFTP traffic
+   
+   # Terminal 2: Watch NFS access
+   sudo tail -f /var/log/syslog | grep -i nfs
+   
+   # Terminal 3: Monitor network traffic
+   sudo tcpdump -i ens34 -nn 'port (67 or 68 or 69 or 111 or 2049)'
    ```
 
 ## Expected Behavior
 
 ### Successful DHCP Test
 ```
-# On Debian VM logs:
+# On Debian VM dnsmasq logs:
 dnsmasq-dhcp[PID]: DHCPDISCOVER(ens34) 00:xx:xx:xx:xx:xx
 dnsmasq-dhcp[PID]: DHCPOFFER(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
 dnsmasq-dhcp[PID]: DHCPREQUEST(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
 dnsmasq-dhcp[PID]: DHCPACK(ens34) 192.168.100.2 00:xx:xx:xx:xx:xx
 ```
 
-### Successful TFTP Test
+### Successful TFTP + NFS Boot
 ```
-# On Debian VM logs:
-dnsmasq-tftp[PID]: sent /srv/tftp/pxelinux.0 to 192.168.100.2
+# dnsmasq logs show pxeboot transfer:
+dnsmasq-tftp[PID]: sent /srv/tftp/pxeboot to 192.168.100.2
+
+# NFS logs show mount and file access:
+kernel: [NFS mount from 192.168.100.2:/srv/nfs/freebsd]
+kernel: [Files accessed via NFS]
+
+# FreeBSD console shows:
+Found int 13h unsafe boot hook at 0xbe117 (c800:117)
+FreeBSD/x86 bootstrap loader, Revision 3.0
+Booting [BootFS]/boot/kernel/kernel...
+...
+[Kernel mounts ZFS root and boots normally]
 ```
 
 ## Troubleshooting
@@ -154,20 +201,71 @@ dnsmasq-tftp[PID]: sent /srv/tftp/pxelinux.0 to 192.168.100.2
 - Check dnsmasq config: `dnsmasq --test`
 
 ### TFTP not working
-- Verify TFTP is enabled in dnsmasq.conf
-- Check file permissions: `ls -la /srv/tftp/`
-- Test with tftp client first before PXE boot
+- Verify TFTP is enabled in dnsmasq.conf: `enable-tftp`
+- Check pxeboot file exists: `ls -la /srv/tftp/pxeboot`
+- Test with tftp client: `tftp 192.168.100.1` then `get pxeboot`
 
-### PXE boot fails
-- Ensure BIOS mode (not UEFI) - config is for BIOS only
-- Verify boot files are in /srv/tftp/
-- Check pxelinux.cfg/default syntax
-- Monitor both DHCP and TFTP logs during boot
+### NFS not working
+- Verify NFS server is running: `sudo systemctl status nfs-kernel-server`
+- Check NFS export configured: `sudo showmount -e localhost`
+- Verify boot files in NFS: `ls -la /srv/nfs/freebsd/boot/kernel/kernel`
+- Test mount from client: `showmount -e 192.168.100.1` and `mount -t nfs 192.168.100.1:/srv/nfs/freebsd /mnt/test`
+- See [NFS_SETUP.md](NFS_SETUP.md) for detailed NFS troubleshooting
+
+### FreeBSD pxeboot hangs after "Revision 3.0"
+
+This indicates pxeboot loaded but can't mount NFS or chain-load loader. Debug with:
+
+1. **Monitor all network traffic**:
+   ```bash
+   sudo tcpdump -i ens34 -nn 'port (67 or 68 or 69 or 111 or 2049)' -vv
+   ```
+   Watch for NFS requests (port 111, 2049) after pxeboot loads.
+
+2. **Check dnsmasq DHCP logs**:
+   ```bash
+   sudo journalctl -u dnsmasq -f
+   ```
+   Verify DHCP root-path option is being provided:
+   ```
+   dhcp-option=17,/srv/nfs/freebsd
+   ```
+
+3. **Verify NFS export**:
+   ```bash
+   sudo showmount -e 192.168.100.1
+   # Should show: /srv/nfs/freebsd 192.168.100.0/24
+   ```
+
+4. **Check loader.conf on NFS**:
+   ```bash
+   cat /srv/nfs/freebsd/boot/loader.conf
+   ```
+   Should contain: `vfs.root.mountfrom="zfs:zroot/ROOT/default"`
+
+5. **Verify pxeboot is correct**:
+   ```bash
+   file /srv/tftp/pxeboot
+   ```
+   Should be: `Intel 80386` or `x86-64` BIOS bootloader, NOT UEFI.
+
+6. **Check NFS server firewall**:
+   ```bash
+   sudo ufw status
+   # Ensure ports 111, 2049 are open to 192.168.100.0/24
+   ```
+
+7. **Check NFS server logs**:
+   ```bash
+   sudo tail -50 /var/log/syslog | grep -i nfs
+   ```
+
+For more detailed NFS troubleshooting, see [NFS_SETUP.md](NFS_SETUP.md).
 
 ## Next Steps
 
-After successful testing:
-1. Add FreeBSD boot files to `/srv/tftp/`
-2. Configure `pxelinux.cfg/default` for FreeBSD boot
-3. Test full network boot
-4. Deploy to production Raspberry Pi hardware
+After successful PXE boot testing:
+1. Verify FreeBSD boots completely and all interfaces work
+2. Document any kernel modules or additional boot configuration needed
+3. Deploy to production Raspberry Pi hardware
+4. Configure router to save state/config to persistent storage
