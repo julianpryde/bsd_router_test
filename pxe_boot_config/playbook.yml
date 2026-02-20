@@ -1,0 +1,354 @@
+---
+- name: Setup Debian PXE Boot Server for FreeBSD
+  hosts: pxe_server
+  become: true
+  vars:
+    remote_ip: "{{ remote_server_ip }}"
+    iso_filename: "{{ freebsd_iso_filename }}"
+    tftp_root: /srv/tftp
+    nfs_root: /srv/nfs/freebsd
+    pxe_network: 192.168.100.0/24
+
+  tasks:
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg:
+          - "Remote server IP: {{ remote_ip }}"
+          - "ISO filename: {{ iso_filename }}"
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - dnsmasq
+          - nfs-kernel-server
+          - xz-utils
+          - libarchive-tools
+        state: present
+
+    - name: Check if network interfaces configuration exists
+      ansible.builtin.stat:
+        path: /etc/network/interfaces.d/pxe-boot
+      register: pxe_boot_config
+
+    - name: Backup existing network interfaces configuration
+      ansible.builtin.copy:
+        src: /etc/network/interfaces.d/pxe-boot
+        dest: "/etc/network/interfaces.d/pxe-boot.bak"
+        remote_src: true
+        mode: preserve
+      when: pxe_boot_config.stat.exists
+
+    - name: Check if dnsmasq configuration exists
+      ansible.builtin.stat:
+        path: /etc/dnsmasq.conf
+      register: dnsmasq_conf
+
+    - name: Backup existing dnsmasq configuration
+      ansible.builtin.copy:
+        src: /etc/dnsmasq.conf
+        dest: "/etc/dnsmasq.conf.bak"
+        remote_src: true
+        mode: preserve
+      when: dnsmasq_conf.stat.exists
+
+    - name: Copy network interfaces configuration
+      ansible.builtin.copy:
+        src: interfaces
+        dest: /etc/network/interfaces.d/pxe-boot
+        mode: '0644'
+      notify: restart networking
+
+    - name: Copy dnsmasq configuration
+      ansible.builtin.copy:
+        src: dnsmasq.conf
+        dest: /etc/dnsmasq.conf
+        mode: '0644'
+      notify: restart dnsmasq
+
+    - name: Clean TFTP directory
+      ansible.builtin.file:
+        path: "{{ tftp_root }}"
+        state: absent
+
+    - name: Create TFTP directory
+      ansible.builtin.file:
+        path: "{{ tftp_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create NFS directory
+      ansible.builtin.file:
+        path: "{{ nfs_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create ISO storage directory
+      ansible.builtin.file:
+        path: /root/freebsd-isos
+        state: directory
+        mode: '0755'
+
+    - name: Check if FreeBSD ISO already exists
+      ansible.builtin.stat:
+        path: "/root/freebsd-isos/{{ iso_filename }}"
+      register: iso_file_stat
+
+    - name: Download FreeBSD ISO
+      ansible.builtin.get_url:
+        url: "http://{{ remote_ip }}:8080/{{ iso_filename }}"
+        dest: "/root/freebsd-isos/{{ iso_filename }}"
+        timeout: 300
+        mode: '0644'
+      register: download_result
+      when: not iso_file_stat.stat.exists
+
+    - name: Extract xz compressed ISO
+      ansible.builtin.command:
+        cmd: "unxz -k /root/freebsd-isos/{{ iso_filename }}"
+      args:
+        creates: "/root/freebsd-isos/{{ iso_filename | regex_replace('\\.xz$', '') }}"
+
+    - name: Check extracted ISO marker
+      ansible.builtin.stat:
+        path: "{{ nfs_root }}/.extracted_iso"
+      register: extracted_iso_marker
+
+    - name: Read extracted ISO marker
+      ansible.builtin.slurp:
+        src: "{{ nfs_root }}/.extracted_iso"
+      register: extracted_iso_content
+      when: extracted_iso_marker.stat.exists
+
+    - name: Determine if re-extraction is needed
+      ansible.builtin.set_fact:
+        needs_extraction: >
+          {{ not extracted_iso_marker.stat.exists or
+             (extracted_iso_content.content | b64decode | trim) != iso_filename }}
+
+    - name: Clean NFS directory for re-extraction
+      ansible.builtin.file:
+        path: "{{ nfs_root }}"
+        state: absent
+      when: needs_extraction
+
+    - name: Recreate NFS directory
+      ansible.builtin.file:
+        path: "{{ nfs_root }}"
+        state: directory
+        mode: '0755'
+      when: needs_extraction
+
+    - name: Extract ISO contents to NFS root
+      ansible.builtin.command:
+        argv:
+          - bsdtar
+          - -xf
+          - "/root/freebsd-isos/{{ iso_filename | regex_replace('\\.xz$', '') }}"
+          - -C
+          - "{{ nfs_root }}"
+      args:
+        creates: "{{ nfs_root }}/boot/pxeboot"
+      when: needs_extraction
+
+    - name: Create extracted ISO marker
+      ansible.builtin.copy:
+        content: "{{ iso_filename }}"
+        dest: "{{ nfs_root }}/.extracted_iso"
+        mode: '0644'
+      when: needs_extraction
+
+    - name: Verify pxeboot exists
+      ansible.builtin.stat:
+        path: "{{ nfs_root }}/boot/pxeboot"
+      register: pxeboot_stat
+      failed_when: not pxeboot_stat.stat.exists
+
+    - name: Copy pxeboot to TFTP directory
+      ansible.builtin.copy:
+        src: "{{ nfs_root }}/boot/pxeboot"
+        dest: "{{ tftp_root }}/pxeboot"
+        remote_src: true
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Verify kernel exists
+      ansible.builtin.stat:
+        path: "{{ nfs_root }}/boot/kernel/kernel"
+      register: kernel_stat
+      failed_when: not kernel_stat.stat.exists
+
+    - name: Copy custom loader.conf
+      ansible.builtin.copy:
+        src: loader.conf
+        dest: "{{ nfs_root }}/boot/loader.conf"
+        mode: '0644'
+
+    - name: Check if NFS configuration exists
+      ansible.builtin.stat:
+        path: /etc/nfs.conf
+      register: nfs_conf
+
+    - name: Backup NFS configuration
+      ansible.builtin.copy:
+        src: /etc/nfs.conf
+        dest: "/etc/nfs.conf.bak"
+        remote_src: true
+        mode: preserve
+      when: nfs_conf.stat.exists
+
+    - name: Configure NFS for UDP and NFSv3
+      ansible.builtin.copy:
+        content: |
+          [general]
+          pipefs-directory=/run/rpc_pipefs
+
+          [mountd]
+          manage-gids=y
+          udp=y
+
+          [nfsd]
+          udp=y
+          vers3=y
+        dest: /etc/nfs.conf
+        mode: '0644'
+      notify: Restart nfs server
+
+    - name: Check if nfs-kernel-server defaults exists
+      ansible.builtin.stat:
+        path: /etc/default/nfs-kernel-server
+      register: nfs_defaults
+
+    - name: Backup nfs-kernel-server defaults
+      ansible.builtin.copy:
+        src: /etc/default/nfs-kernel-server
+        dest: "/etc/default/nfs-kernel-server.bak"
+        remote_src: true
+        mode: preserve
+      when: nfs_defaults.stat.exists
+
+    - name: Configure RPCMOUNTD options
+      ansible.builtin.lineinfile:
+        path: /etc/default/nfs-kernel-server
+        line: 'RPCMOUNTDOPTS="--no-tcp"'
+        regexp: '^RPCMOUNTDOPTS='
+        state: present
+        create: true
+        mode: '0644'
+      notify: Restart nfs server
+
+    - name: Configure NFS export
+      ansible.builtin.lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_root }} {{ pxe_network }}(rw,sync,no_subtree_check)"
+        state: present
+        create: true
+        mode: '0644'
+      notify:
+        - Reload exports
+        - Restart nfs server
+
+    - name: Set TFTP directory permissions
+      ansible.builtin.file:
+        path: "{{ tftp_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure NFS root is accessible
+      ansible.builtin.file:
+        path: "{{ nfs_root }}"
+        state: directory
+        mode: '0755'
+        recurse: true
+
+    - name: Enable services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - dnsmasq
+        - nfs-kernel-server
+
+  handlers:
+    - name: Restart networking
+      ansible.builtin.systemd:
+        name: networking
+        state: restarted
+
+    - name: Restart dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: restarted
+
+    - name: Reload exports
+      ansible.builtin.command:
+        cmd: exportfs -ra
+      changed_when: false
+
+    - name: Restart nfs server
+      ansible.builtin.systemd:
+        name: nfs-kernel-server
+        state: restarted
+
+- name: Verify PXE Boot Setup
+  hosts: pxe_server
+  become: true
+  vars:
+    tftp_root: /srv/tftp
+    nfs_root: /srv/nfs/freebsd
+
+  tasks:
+    - name: List TFTP files
+      ansible.builtin.command:
+        cmd: ls -lh {{ tftp_root }}/
+      register: tftp_files
+      changed_when: false
+
+    - name: Display TFTP files
+      ansible.builtin.debug:
+        msg: "{{ tftp_files.stdout_lines }}"
+
+    - name: Show NFS exports
+      ansible.builtin.command:
+        cmd: showmount -e localhost
+      register: nfs_exports
+      changed_when: false
+
+    - name: Display NFS exports
+      ansible.builtin.debug:
+        msg: "{{ nfs_exports.stdout_lines }}"
+
+    - name: Verify required files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: file_check
+      failed_when: not file_check.stat.exists
+      loop:
+        - "{{ tftp_root }}/pxeboot"
+        - "{{ nfs_root }}/boot/loader.conf"
+        - "{{ nfs_root }}/boot/kernel/kernel"
+
+    - name: Display success message
+      ansible.builtin.debug:
+        msg:
+          - "✓ PXE Boot Setup Complete!"
+          - "✓ All required files are in place:"
+          - "  - /srv/tftp/pxeboot (loaded via TFTP)"
+          - "  - /srv/nfs/freebsd/boot/loader.conf (accessed via NFS)"
+          - "  - /srv/nfs/freebsd/boot/kernel/kernel (accessed via NFS)"
+          - ""
+          - "Boot sequence:"
+          - "  1. pxeboot loads via TFTP"
+          - "  2. pxeboot mounts NFS from /srv/nfs/freebsd"
+          - "  3. Kernel loads from NFS mount"
+          - "  4. Kernel boots from NFS root"
+          - ""
+          - "Network Configuration:"
+          - "  This server: 192.168.100.1"
+          - "  Router (em2): 192.168.100.2"

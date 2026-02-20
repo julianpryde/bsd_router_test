@@ -23,28 +23,49 @@ This folder contains configuration files for a Debian VM that provides PXE boot 
 5. Kernel boots from local ZFS storage (zfs:zroot/ROOT/default)
 6. All other router services (WAN, LAN) operate independently through em0/em1
 
-## Quick Start
+## Quick Start - Ansible (Recommended)
 
-Run the automated setup script to configure the PXE boot server:
+Use the Ansible playbook to configure the PXE boot server in an idempotent, declarative manner:
 
 ```bash
-sudo bash setup.sh <remote_ip>
+# Install Ansible (if not already installed)
+sudo apt install ansible
+
+# Install required Ansible collections
+ansible-galaxy collection install -r requirements.yml
+
+# Edit inventory.ini and set your configuration
+# - Update the IP address/hostname for your PXE server
+# - Set remote_server_ip to the host serving the FreeBSD ISO
+# - Set freebsd_iso_filename to your ISO filename
+nano inventory.ini
+
+# Run the playbook
+ansible-playbook playbook.yml
 ```
 
-Replace `<remote_ip>` with the IP of the host serving `FreeBSD-15.0/boot/` over HTTP on port 8080.
-
-This script will:
-- Install required packages (dnsmasq, nfs-kernel-server)
-- Back up any existing configuration files
+The playbook will:
+- Install required packages (dnsmasq, nfs-kernel-server, xz-utils, p7zip-full)
+- Back up any existing configuration files with timestamps
 - Apply network, DHCP, and NFS configuration
+- Download and extract the FreeBSD ISO from the remote server
 - Create TFTP and NFS export directories
 - Copy FreeBSD boot files to both TFTP and NFS directories
 - Install custom loader.conf configured for ZFS root boot
-- Configure NFS exports for client access
+- Configure NFS exports for client access (with UDP/NFSv3 support)
 - Set appropriate file permissions
 - Start and enable dnsmasq and NFS services
+- Verify the installation
 
-After setup completes, follow the next steps displayed by the script.
+## Alternative - Shell Script
+
+If you prefer a simple shell script, you can use the legacy setup script:
+
+```bash
+sudo bash setup.sh <remote_ip> <iso_filename>
+```
+
+Replace `<remote_ip>` with the IP of the host serving the FreeBSD ISO over HTTP on port 8080, and `<iso_filename>` with the name of the .xz compressed ISO file (e.g., `FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz`).
 
 ## Manual Installation (Alternative)
 
@@ -91,7 +112,11 @@ sudo exportfs -ra
 ```
 
 ## Files in This Directory
-- `setup.sh` - Automated setup script (recommended)
+- `playbook.yml` - Ansible playbook for automated setup (recommended)
+- `inventory.ini` - Ansible inventory file with configuration variables
+- `requirements.yml` - Ansible collection requirements
+- `ansible.cfg` - Ansible configuration file
+- `setup.sh` - Legacy shell script for automated setup
 - `interfaces` - Network configuration for Debian VM
 - `dnsmasq.conf` - DHCP and TFTP server configuration
 - `loader.conf` - FreeBSD boot loader configuration (ZFS root boot)
