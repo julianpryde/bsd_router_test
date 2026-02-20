@@ -347,7 +347,7 @@
           - "  1. pxeboot loads via TFTP"
           - "  2. pxeboot mounts NFS from /srv/nfs/freebsd"
           - "  3. Kernel loads from NFS mount"
-          - "  4. Kernel boots from NFS root"
+          - "  4. Kernel boots with NFS root filesystem (diskless)"
           - ""
           - "Network Configuration:"
           - "  This server: 192.168.100.1"

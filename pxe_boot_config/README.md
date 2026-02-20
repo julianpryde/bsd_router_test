@@ -20,7 +20,7 @@ This folder contains configuration files for a Debian VM that provides PXE boot 
 2. Debian VM responds with IP address, pxeboot filename, and NFS mount path
 3. Router downloads pxeboot via TFTP
 4. pxeboot mounts NFS and loads kernel and loader files
-5. Kernel boots from local ZFS storage (zfs:zroot/ROOT/default)
+5. Kernel boots from NFS root filesystem (diskless boot)
 6. All other router services (WAN, LAN) operate independently through em0/em1
 
 ## Quick Start - Ansible (Recommended)
@@ -51,7 +51,7 @@ The playbook will:
 - Download and extract the FreeBSD ISO from the remote server
 - Create TFTP and NFS export directories
 - Copy FreeBSD boot files to both TFTP and NFS directories
-- Install custom loader.conf configured for ZFS root boot
+- Install custom loader.conf configured for NFS root boot
 - Configure NFS exports for client access (with UDP/NFSv3 support)
 - Set appropriate file permissions
 - Start and enable dnsmasq and NFS services
@@ -98,7 +98,7 @@ sudo cp FreeBSD-15.0/boot/pxeboot /srv/tftp/
 # Copy boot files to NFS export (for loader and kernel via NFS)
 sudo cp -r FreeBSD-15.0/boot /srv/nfs/freebsd/
 
-# Install custom loader.conf (configured for ZFS boot)
+# Install custom loader.conf (configured for NFS root boot)
 sudo cp loader.conf /srv/nfs/freebsd/boot/loader.conf
 
 # Set permissions
@@ -119,7 +119,7 @@ sudo exportfs -ra
 - `setup.sh` - Legacy shell script for automated setup
 - `interfaces` - Network configuration for Debian VM
 - `dnsmasq.conf` - DHCP and TFTP server configuration
-- `loader.conf` - FreeBSD boot loader configuration (ZFS root boot)
+- `loader.conf` - FreeBSD boot loader configuration (NFS root boot)
 - `README.md` - This file
 - `NFS_SETUP.md` - Detailed NFS server configuration and troubleshooting
 - `TESTING.md` - Testing procedures
@@ -146,13 +146,13 @@ ls -la /srv/tftp/
 
 ## FreeBSD Boot Files
 
-The setup script downloads FreeBSD boot files from the remote HTTP server and sets up **NFS-based PXE boot with local ZFS root** storage.
+The setup script downloads FreeBSD boot files from the remote HTTP server and sets up **NFS-based PXE boot with NFS root filesystem** (diskless boot).
 
 ### Required Files
 
 - **/srv/tftp/pxeboot**: First-stage PXE bootloader (TFTP)
 - **/srv/nfs/freebsd/boot/**: Complete boot directory (NFS)
-- **/srv/nfs/freebsd/boot/loader.conf**: Boot configuration for ZFS root
+- **/srv/nfs/freebsd/boot/loader.conf**: Boot configuration for NFS root
 
 ### Verifying Boot Files
 
@@ -173,10 +173,10 @@ sudo showmount -e localhost
 You should see:
 - `pxeboot` in `/srv/tftp/`
 - Complete `boot/` directory structure in `/srv/nfs/freebsd/`
-- `boot/loader.conf` with ZFS boot configuration
+- `boot/loader.conf` with NFS root boot configuration
 - `boot/kernel/kernel` available via NFS
 
-### Boot Process Flow (NFS + Local ZFS Root)
+### Boot Process Flow (NFS Root - Diskless Boot)
 
 1. Router sends PXE boot request on em2
 2. dnsmasq responds with:
@@ -187,15 +187,15 @@ You should see:
 4. pxeboot mounts NFS from 192.168.100.1:/srv/nfs/freebsd
 5. pxeboot chain-loads to loader_lua or loader_4th (second-stage, via NFS)
 6. Loader reads `/boot/loader.conf` (from NFS mount) for boot configuration
-7. Loader downloads kernel from `/boot/kernel/kernel` (via NFS)
-8. Kernel boots and mounts ZFS root filesystem (zfs:zroot/ROOT/default)
-9. FreeBSD boots with root mounted from local storage
+7. Loader downloads kernel from `/boot/kernel/kernel` (via NFS) and executes it
+8. Kernel mounts NFS root filesystem from 192.168.100.1:/srv/nfs/freebsd
+9. FreeBSD boots as a diskless client with root filesystem served entirely over NFS
 
-**Note:** The multi-stage boot process requires:
+**Note:** The diskless boot process requires:
 - pxeboot (TFTP): Minimal first-stage bootloader
 - Complete boot/ directory structure (NFS): Including loader, scripts, and kernel
-- loader.conf configured for ZFS root mount
-- NFS export accessible to the booting client
+- loader.conf configured for NFS root mount
+- NFS export accessible to the booting client with read-write permissions (rw)
 
 ## Notes
 - Uses Raspberry Pi OS defaults where applicable
