@@ -36,8 +36,7 @@ ansible-galaxy collection install -r requirements.yml
 
 # Edit inventory.ini and set your configuration
 # - Update the IP address/hostname for your PXE server
-# - Set remote_server_ip to the host serving the FreeBSD ISO
-# - Set freebsd_iso_filename to your ISO filename
+# - Set remote_server_ip to the host serving the FreeBSD release files
 nano inventory.ini
 
 # Run the playbook
@@ -48,9 +47,9 @@ The playbook will:
 - Install required packages (dnsmasq, nfs-kernel-server, xz-utils, p7zip-full)
 - Back up any existing configuration files with timestamps
 - Apply network, DHCP, and NFS configuration
-- Download and extract the FreeBSD ISO from the remote server
+- Download and extract the FreeBSD base.txz and kernel.txz from the remote server
 - Create TFTP and NFS export directories
-- Copy FreeBSD boot files to both TFTP and NFS directories
+- Extract FreeBSD release files to NFS directory and copy pxeboot to TFTP directory
 - Install custom loader.conf configured for NFS root boot
 - Configure NFS exports for client access (with UDP/NFSv3 support)
 - Set appropriate file permissions
@@ -62,10 +61,10 @@ The playbook will:
 If you prefer a simple shell script, you can use the legacy setup script:
 
 ```bash
-sudo bash setup.sh <remote_ip> <iso_filename>
+sudo bash setup.sh <remote_ip>
 ```
 
-Replace `<remote_ip>` with the IP of the host serving the FreeBSD ISO over HTTP on port 8080, and `<iso_filename>` with the name of the .xz compressed ISO file (e.g., `FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz`).
+Replace `<remote_ip>` with the IP of the host serving the FreeBSD release files (`base.txz` and `kernel.txz`) over HTTP on port 8080.
 
 ## Manual Installation (Alternative)
 
@@ -87,16 +86,17 @@ sudo systemctl restart dnsmasq
 sudo systemctl enable dnsmasq
 ```
 
-### Setup TFTP and NFS Directories and Copy Boot Files
+### Setup TFTP and NFS Directories and Extract Release Files
 ```bash
 sudo mkdir -p /srv/tftp
 sudo mkdir -p /srv/nfs/freebsd
 
-# Copy pxeboot to TFTP root (for initial boot via TFTP)
-sudo cp FreeBSD-15.0/boot/pxeboot /srv/tftp/
+# Extract base and kernel to NFS export
+sudo tar -xf base.txz -C /srv/nfs/freebsd/
+sudo tar -xf kernel.txz -C /srv/nfs/freebsd/
 
-# Copy boot files to NFS export (for loader and kernel via NFS)
-sudo cp -r FreeBSD-15.0/boot /srv/nfs/freebsd/
+# Copy pxeboot to TFTP root (for initial boot via TFTP)
+sudo cp /srv/nfs/freebsd/boot/pxeboot /srv/tftp/
 
 # Install custom loader.conf (configured for NFS root boot)
 sudo cp loader.conf /srv/nfs/freebsd/boot/loader.conf
@@ -123,7 +123,6 @@ sudo exportfs -ra
 - `README.md` - This file
 - `NFS_SETUP.md` - Detailed NFS server configuration and troubleshooting
 - `TESTING.md` - Testing procedures
-- `FreeBSD-15.0/` - FreeBSD boot files (source directory)
 
 ## Additional Documentation
 
@@ -144,9 +143,9 @@ systemctl status dnsmasq
 ls -la /srv/tftp/
 ```
 
-## FreeBSD Boot Files
+## FreeBSD Release Files
 
-The setup script downloads FreeBSD boot files from the remote HTTP server and sets up **NFS-based PXE boot with NFS root filesystem** (diskless boot).
+The setup script downloads FreeBSD release files (`base.txz` and `kernel.txz`) from the remote HTTP server and sets up **NFS-based PXE boot with NFS root filesystem** (diskless boot).
 
 ### Required Files
 

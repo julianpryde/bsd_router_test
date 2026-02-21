@@ -40,7 +40,7 @@ Debian/Linux PXE Server (192.168.100.1)
 The `setup.sh` script automatically:
 - Installs `nfs-kernel-server`
 - Creates `/srv/nfs/freebsd` directory
-- Downloads `FreeBSD-15.0/boot` from the remote HTTP server and copies it to `/srv/nfs/freebsd/boot`
+- Downloads `base.txz` and `kernel.txz` from the remote HTTP server and extracts them to `/srv/nfs/freebsd`
 - Configures NFS UDP and NFSv3 settings for FreeBSD `pxeboot` compatibility
 - Configures `/etc/exports` to share the NFS export
 - Starts and enables the NFS server
@@ -60,11 +60,12 @@ sudo apt install -y nfs-kernel-server
 sudo mkdir -p /srv/nfs/freebsd
 ```
 
-### 3. Copy Boot Files
+### 3. Extract Release Files
 ```bash
-sudo cp -r /path/to/FreeBSD-15.0/boot /srv/nfs/freebsd/
+sudo tar -xf /path/to/base.txz -C /srv/nfs/freebsd/
+sudo tar -xf /path/to/kernel.txz -C /srv/nfs/freebsd/
 ```
-If you are using the automated flow, `setup.sh` will download the boot files from the HTTP server instead of copying from local disk.
+If you are using the automated flow, `setup.sh` will download the release files from the HTTP server instead of copying from local disk.
 
 ### 4. Configure NFS Export
 

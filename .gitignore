@@ -1,5 +1,6 @@
 # FreeBSD boot files
 pxe_boot_config/FreeBSD-15.0*
+*.txz
 
 # Metadata files
 .DS_Store

@@ -14,7 +14,7 @@
    cd debian-pxe-boot
    sudo ./setup.sh <remote_ip>
    ```
-   Replace `<remote_ip>` with the IP of the host serving `FreeBSD-15.0/boot/` over HTTP on port 8080.
+   Replace `<remote_ip>` with the IP of the host serving `base.txz` and `kernel.txz` over HTTP on port 8080.
 
 2. **Verify network configuration**:
    ```bash

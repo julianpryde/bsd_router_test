@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup script for Debian PXE Boot Server
 # Run with sudo
-# Usage: sudo ./setup.sh <remote_ip> <iso_filename>
+# Usage: sudo ./setup.sh <remote_ip>
 
 set -e
 
@@ -15,18 +15,14 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Parse command line arguments
-if [ $# -ne 2 ]; then
-    echo "Usage: sudo ./setup.sh <remote_ip> <iso_filename>"
-    echo "  remote_ip: IP address of the server hosting the ISO file"
-    echo "  iso_filename: Name of the .xz compressed ISO file (e.g., FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz)"
+if [ $# -ne 1 ]; then
+    echo "Usage: sudo ./setup.sh <remote_ip>"
+    echo "  remote_ip: IP address of the server hosting the release files"
     exit 1
 fi
 
 REMOTE_IP="$1"
 echo "Remote server IP: $REMOTE_IP"
-
-ISO_FILENAME="$2"
-echo "ISO filename: $ISO_FILENAME"
 
 # Get the directory where this script is located
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -34,7 +30,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 echo
 echo "Step 1: Installing required packages..."
 apt update
-apt install -y dnsmasq nfs-kernel-server xz-utils p7zip-full
+apt install -y dnsmasq nfs-kernel-server xz-utils libarchive-tools
 
 echo
 echo "Step 2: Backing up existing configuration..."
@@ -60,54 +56,54 @@ rm -rf /srv/nfs/freebsd/*  # Clean NFS directory
 
 # Create temp directories for extraction
 TEMP_DIR=$(mktemp -d)
-TEMP_ISO_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR $TEMP_ISO_DIR" EXIT
+trap "rm -rf $TEMP_DIR" EXIT
 
-echo "Downloading FreeBSD ISO from http://$REMOTE_IP:8080/$ISO_FILENAME..."
-wget "http://$REMOTE_IP:8080/$ISO_FILENAME" -O "$TEMP_DIR/$ISO_FILENAME" 2>&1 | grep -E "(^HTTP|saved|failed)" || true
+echo "Downloading FreeBSD base.txz from http://$REMOTE_IP:8080/base.txz..."
+wget "http://$REMOTE_IP:8080/base.txz" -O "$TEMP_DIR/base.txz" 2>&1 | grep -E "(^HTTP|saved|failed)" || true
 
-if [ ! -f "$TEMP_DIR/$ISO_FILENAME" ]; then
-    echo "ERROR: Failed to download $ISO_FILENAME"
-    echo "Check that http://$REMOTE_IP:8080/$ISO_FILENAME is accessible"
+if [ ! -f "$TEMP_DIR/base.txz" ]; then
+    echo "ERROR: Failed to download base.txz"
+    echo "Check that http://$REMOTE_IP:8080/base.txz is accessible"
     exit 1
 fi
-echo "✓ ISO downloaded"
+echo "✓ base.txz downloaded"
 
-echo "Extracting .xz archive..."
-unxz -k "$TEMP_DIR/$ISO_FILENAME" -c > "$TEMP_DIR/${ISO_FILENAME%.xz}" 2>&1 | grep -E "(Error|OK)" || true
-ISO_NAME="${ISO_FILENAME%.xz}"
+echo "Downloading FreeBSD kernel.txz from http://$REMOTE_IP:8080/kernel.txz..."
+wget "http://$REMOTE_IP:8080/kernel.txz" -O "$TEMP_DIR/kernel.txz" 2>&1 | grep -E "(^HTTP|saved|failed)" || true
 
-if [ ! -f "$TEMP_DIR/$ISO_NAME" ]; then
-    echo "ERROR: Failed to extract ISO from .xz archive"
+if [ ! -f "$TEMP_DIR/kernel.txz" ]; then
+    echo "ERROR: Failed to download kernel.txz"
+    echo "Check that http://$REMOTE_IP:8080/kernel.txz is accessible"
     exit 1
 fi
-echo "✓ ISO extracted"
+echo "✓ kernel.txz downloaded"
 
-echo "Extracting ISO contents using 7z..."
-7z x "$TEMP_DIR/$ISO_NAME" -o"$TEMP_ISO_DIR" > /dev/null 2>&1 || {
-    echo "ERROR: Failed to extract ISO"
-    exit 1
-}
-echo "✓ ISO contents extracted to temporary directory"
+echo "Extracting base.txz to NFS root..."
+tar -xf "$TEMP_DIR/base.txz" -C /srv/nfs/freebsd/
+echo "✓ base.txz extracted"
 
-echo "Copying FreeBSD filesystem to NFS root..."
-cp -a "$TEMP_ISO_DIR"/* /srv/nfs/freebsd/ 2>&1 | tail -20 || {
-    echo "ERROR: Failed to copy filesystem"
-    exit 1
-}
-echo "✓ Filesystem copied to /srv/nfs/freebsd"
+echo "Extracting kernel.txz to NFS root..."
+tar -xf "$TEMP_DIR/kernel.txz" -C /srv/nfs/freebsd/
+echo "✓ kernel.txz extracted"
 
-echo "Extracting boot files..."
+echo "Creating empty fstab and rc.conf for diskless boot..."
+echo "# Custom fstab for diskless boot" > /srv/nfs/freebsd/etc/fstab
+cat << 'EOF' > /srv/nfs/freebsd/etc/rc.conf
+# Diskless NFS root boot - prevent early mount operations
+early_late_divider="mountcritlocal"
+hostname="router"
+EOF
+echo "✓ fstab and rc.conf created"
 if [ -f "/srv/nfs/freebsd/boot/pxeboot" ]; then
     cp "/srv/nfs/freebsd/boot/pxeboot" /srv/tftp/pxeboot
     echo "✓ Copied pxeboot to TFTP"
 else
-    echo "ERROR: pxeboot not found in ISO"
+    echo "ERROR: pxeboot not found in base.txz"
     exit 1
 fi
 
 if [ ! -f "/srv/nfs/freebsd/boot/kernel/kernel" ]; then
-    echo "ERROR: kernel not found in ISO"
+    echo "ERROR: kernel not found in kernel.txz"
     exit 1
 fi
 

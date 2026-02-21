@@ -32,7 +32,6 @@ Edit `inventory.ini` and set your values:
 
 [pxe_server:vars]
 remote_server_ip=172.21.135.127
-freebsd_iso_filename=FreeBSD-15.0-RELEASE-amd64-disc1.iso.xz
 ```
 
 Then run:
@@ -46,7 +45,6 @@ ansible-playbook playbook.yml
 ansible-playbook playbook.yml \
   -i "192.168.244.135," \
   -e "remote_server_ip=172.21.135.127" \
-  -e "freebsd_iso_filename=FreeBSD-15.0-RELEASE-amd64-disc1.iso.xz" \
   -u root
 ```
 
@@ -55,7 +53,6 @@ ansible-playbook playbook.yml \
 Create a file `vars.yml`:
 ```yaml
 remote_server_ip: 172.21.135.127
-freebsd_iso_filename: FreeBSD-15.0-RELEASE-amd64-disc1.iso.xz
 ```
 
 Run with:
@@ -133,8 +130,8 @@ ansible pxe_server -m systemd -a "name=dnsmasq state=started" --check
    ansible_python_interpreter=/usr/bin/python3
    ```
 
-3. **ISO Download Fails**:
-   - Verify the remote server is accessible: `curl http://<remote_ip>:8080/<iso_filename>`
+3. **Download Fails**:
+   - Verify the remote server is accessible: `curl http://<remote_ip>:8080/base.txz`
    - Check firewall rules on both ends
    - Increase timeout in playbook if needed
 
@@ -170,8 +167,7 @@ To customize the playbook for your environment:
 ### Example 1: Local Network Setup
 ```bash
 ansible-playbook playbook.yml \
-  -e "remote_server_ip=192.168.1.50" \
-  -e "freebsd_iso_filename=FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz"
+  -e "remote_server_ip=192.168.1.50"
 ```
 
 ### Example 2: Remote Host
@@ -179,7 +175,6 @@ ansible-playbook playbook.yml \
 ansible-playbook playbook.yml \
   -i "pxe-server.example.com," \
   -e "remote_server_ip=fileserver.example.com" \
-  -e "freebsd_iso_filename=FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz" \
   -u admin \
   --ask-become-pass
 ```
@@ -193,7 +188,6 @@ pxe-2.example.com
 
 [pxe_server:vars]
 remote_server_ip=fileserver.example.com
-freebsd_iso_filename=FreeBSD-15.0-RELEASE-amd64-dvd1.iso.xz
 ```
 
 Run:

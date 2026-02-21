@@ -4,7 +4,6 @@
   become: true
   vars:
     remote_ip: "{{ remote_server_ip }}"
-    iso_filename: "{{ freebsd_iso_filename }}"
     tftp_root: /srv/tftp
     nfs_root: /srv/nfs/freebsd
     pxe_network: 192.168.100.0/24
@@ -14,7 +13,6 @@
       ansible.builtin.debug:
         msg:
           - "Remote server IP: {{ remote_ip }}"
-          - "ISO filename: {{ iso_filename }}"
 
     - name: Update apt cache
       ansible.builtin.apt:
@@ -87,80 +85,177 @@
         state: directory
         mode: '0755'
 
-    - name: Create ISO storage directory
+    - name: Create release storage directory
       ansible.builtin.file:
-        path: /root/freebsd-isos
+        path: /root/freebsd-release
         state: directory
         mode: '0755'
 
-    - name: Check if FreeBSD ISO already exists
+    - name: Check extracted release marker
       ansible.builtin.stat:
-        path: "/root/freebsd-isos/{{ iso_filename }}"
-      register: iso_file_stat
+        path: "{{ nfs_root }}/.extracted_release"
+      register: extracted_release_marker
 
-    - name: Download FreeBSD ISO
+    - name: Download FreeBSD base.txz
       ansible.builtin.get_url:
-        url: "http://{{ remote_ip }}:8080/{{ iso_filename }}"
-        dest: "/root/freebsd-isos/{{ iso_filename }}"
+        url: "http://{{ remote_ip }}:8080/base.txz"
+        dest: "/root/freebsd-release/base.txz"
         timeout: 300
         mode: '0644'
-      register: download_result
-      when: not iso_file_stat.stat.exists
+      when: not extracted_release_marker.stat.exists
 
-    - name: Extract xz compressed ISO
-      ansible.builtin.command:
-        cmd: "unxz -k /root/freebsd-isos/{{ iso_filename }}"
-      args:
-        creates: "/root/freebsd-isos/{{ iso_filename | regex_replace('\\.xz$', '') }}"
-
-    - name: Check extracted ISO marker
-      ansible.builtin.stat:
-        path: "{{ nfs_root }}/.extracted_iso"
-      register: extracted_iso_marker
-
-    - name: Read extracted ISO marker
-      ansible.builtin.slurp:
-        src: "{{ nfs_root }}/.extracted_iso"
-      register: extracted_iso_content
-      when: extracted_iso_marker.stat.exists
-
-    - name: Determine if re-extraction is needed
-      ansible.builtin.set_fact:
-        needs_extraction: >
-          {{ not extracted_iso_marker.stat.exists or
-             (extracted_iso_content.content | b64decode | trim) != iso_filename }}
+    - name: Download FreeBSD kernel.txz
+      ansible.builtin.get_url:
+        url: "http://{{ remote_ip }}:8080/kernel.txz"
+        dest: "/root/freebsd-release/kernel.txz"
+        timeout: 300
+        mode: '0644'
+      when: not extracted_release_marker.stat.exists
 
     - name: Clean NFS directory for re-extraction
       ansible.builtin.file:
         path: "{{ nfs_root }}"
         state: absent
-      when: needs_extraction
+      when: not extracted_release_marker.stat.exists
 
     - name: Recreate NFS directory
       ansible.builtin.file:
         path: "{{ nfs_root }}"
         state: directory
         mode: '0755'
-      when: needs_extraction
+      when: not extracted_release_marker.stat.exists
 
-    - name: Extract ISO contents to NFS root
-      ansible.builtin.command:
-        argv:
-          - bsdtar
-          - -xf
-          - "/root/freebsd-isos/{{ iso_filename | regex_replace('\\.xz$', '') }}"
-          - -C
-          - "{{ nfs_root }}"
-      args:
-        creates: "{{ nfs_root }}/boot/pxeboot"
-      when: needs_extraction
+    - name: Extract base.txz to NFS root
+      ansible.builtin.unarchive:
+        src: "/root/freebsd-release/base.txz"
+        dest: "{{ nfs_root }}"
+        remote_src: true
+        creates: "{{ nfs_root }}/bin/sh"
+      when: not extracted_release_marker.stat.exists
 
-    - name: Create extracted ISO marker
+    - name: Extract kernel.txz to NFS root
+      ansible.builtin.unarchive:
+        src: "/root/freebsd-release/kernel.txz"
+        dest: "{{ nfs_root }}"
+        remote_src: true
+        creates: "{{ nfs_root }}/boot/kernel/kernel"
+      when: not extracted_release_marker.stat.exists
+
+    - name: Create extracted release marker
       ansible.builtin.copy:
-        content: "{{ iso_filename }}"
-        dest: "{{ nfs_root }}/.extracted_iso"
+        content: "base and kernel extracted"
+        dest: "{{ nfs_root }}/.extracted_release"
         mode: '0644'
-      when: needs_extraction
+      when: not extracted_release_marker.stat.exists
+
+    - name: Create empty fstab to prevent mount errors
+      ansible.builtin.copy:
+        content: "# Custom fstab for diskless boot\n"
+        dest: "{{ nfs_root }}/etc/fstab"
+        mode: '0644'
+        force: false
+
+    - name: Create first-boot package installation script
+      ansible.builtin.copy:
+        dest: "{{ nfs_root }}/etc/rc.local"
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          # Run package installation on first boot
+          if [ ! -f /var/.packages_installed ]; then
+              echo "========================================"
+              echo "First boot: Installing packages..."
+              echo "========================================"
+
+              # Bootstrap and install packages
+              pkg bootstrap -y
+              pkg install -y dnsmasq ca_root_nss
+
+              # Create dnscrypt-proxy user
+              pw useradd _dnscrypt-proxy -d /nonexistent -s /usr/sbin/nologin -c 'dnscrypt-proxy user' 2>/dev/null || true
+
+              # Mark as complete
+              touch /var/.packages_installed
+
+              echo "========================================"
+              echo "Package installation complete!"
+              echo "Starting services..."
+              echo "========================================"
+
+              # Start services now that packages are installed
+              service dnsmasq start
+              service dnscrypt_proxy start
+
+              echo "First boot setup complete"
+          fi
+
+    - name: Download dnscrypt-proxy
+      ansible.builtin.get_url:
+        url: "https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.15/dnscrypt-proxy-freebsd_amd64-2.1.15.tar.gz"
+        dest: "/tmp/dnscrypt-proxy.tar.gz"
+        mode: '0644'
+
+    - name: Extract dnscrypt-proxy
+      ansible.builtin.unarchive:
+        src: "/tmp/dnscrypt-proxy.tar.gz"
+        dest: "/tmp"
+        remote_src: true
+        creates: "/tmp/freebsd-amd64/dnscrypt-proxy"
+
+    - name: Create /usr/local/sbin directory
+      ansible.builtin.file:
+        path: "{{ nfs_root }}/usr/local/sbin"
+        state: directory
+        mode: '0755'
+        owner: "0"
+        group: "0"
+
+    - name: Install dnscrypt-proxy binary
+      ansible.builtin.copy:
+        src: "/tmp/freebsd-amd64/dnscrypt-proxy"
+        dest: "{{ nfs_root }}/usr/local/sbin/dnscrypt-proxy"
+        mode: '0755'
+        remote_src: true
+
+    - name: Create dnscrypt-proxy directories
+      ansible.builtin.file:
+        path: "{{ nfs_root }}/{{ item }}"
+        state: directory
+        mode: '0750'
+        owner: "0"
+        group: "0"
+      loop:
+        - usr/local/etc
+        - usr/local/etc/rc.d
+        - usr/local/etc/dnscrypt-proxy
+        - var/log/dnscrypt-proxy
+        - var/cache/dnscrypt-proxy
+
+    - name: Copy router configuration files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../router_config/{{ item.src }}"
+        dest: "{{ nfs_root }}/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: 'rc.conf', dest: 'etc/rc.conf', mode: '0644' }
+        - { src: 'pf.conf', dest: 'etc/pf.conf', mode: '0644' }
+        - { src: 'dnsmasq.conf', dest: 'usr/local/etc/dnsmasq.conf', mode: '0644' }
+        - { src: 'dnscrypt-proxy', dest: 'usr/local/etc/rc.d/dnscrypt_proxy', mode: '0755' }
+        - { src: 'dnscrypt-proxy.toml', dest: 'usr/local/etc/dnscrypt-proxy/dnscrypt-proxy.toml', mode: '0640' }
+        - { src: 'blocklist.txt', dest: 'usr/local/etc/dnscrypt-proxy/blocklist.txt', mode: '0640' }
+        - { src: 'update_blocklists.sh', dest: 'usr/local/sbin/update_blocklists.sh', mode: '0755' }
+
+    - name: Download dnscrypt-proxy resolver list
+      ansible.builtin.get_url:
+        url: "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md"
+        dest: "{{ nfs_root }}/var/cache/dnscrypt-proxy/public-resolvers.md"
+        mode: '0644'
+
+    - name: Download dnscrypt-proxy resolver list signature
+      ansible.builtin.get_url:
+        url: "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md.minisig"
+        dest: "{{ nfs_root }}/var/cache/dnscrypt-proxy/public-resolvers.md.minisig"
+        mode: '0644'
 
     - name: Verify pxeboot exists
       ansible.builtin.stat:
