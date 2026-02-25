@@ -8,3 +8,8 @@ setup.sh
 update_blocklists.sh
 restore_from_backup.sh
 cleanup_backups.sh
+zeek_rc.d
+zeek/ja4_fingerprint.zeek
+zeek/local.zeek
+zeek/node.cfg
+zeek/zeekctl.cfg
