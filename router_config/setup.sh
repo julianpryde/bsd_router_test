@@ -50,6 +50,10 @@ install_packages() {
   if ! pkg info ca_root_nss >/dev/null 2>&1; then
     MISSING_PACKAGES="$MISSING_PACKAGES ca_root_nss"
   fi
+
+  if ! pkg info zeek >/dev/null 2>&1; then
+    MISSING_PACKAGES="$MISSING_PACKAGES zeek"
+  fi
   
   if [ -z "$MISSING_PACKAGES" ]; then
     echo "All required packages are already installed"
@@ -143,6 +147,43 @@ copy_configs() {
   chmod 750 /var/log/dnscrypt-proxy
 }
 
+setup_zeek() {
+  echo "Configuring Zeek for JA4 fingerprinting..."
+
+  # Create Zeek configuration directory
+  mkdir -p /usr/local/etc/zeek
+
+  # Copy ZeekControl and node configuration
+  backup_file /usr/local/etc/zeek/zeekctl.cfg
+  cp -p "${SCRIPT_DIR}/zeek/zeekctl.cfg" /usr/local/etc/zeek/zeekctl.cfg
+
+  backup_file /usr/local/etc/zeek/node.cfg
+  cp -p "${SCRIPT_DIR}/zeek/node.cfg" /usr/local/etc/zeek/node.cfg
+
+  # Install site-local Zeek scripts
+  mkdir -p /usr/local/share/zeek/site
+  backup_file /usr/local/share/zeek/site/local.zeek
+  cp -p "${SCRIPT_DIR}/zeek/local.zeek" /usr/local/share/zeek/site/local.zeek
+  cp -p "${SCRIPT_DIR}/zeek/ja4_fingerprint.zeek" /usr/local/share/zeek/site/ja4_fingerprint.zeek
+
+  # Create log and spool directories
+  mkdir -p /var/log/zeek
+  mkdir -p /var/spool/zeek
+
+  # Install rc.d script
+  backup_file /usr/local/etc/rc.d/zeek
+  cp -p "${SCRIPT_DIR}/zeek_rc.d" /usr/local/etc/rc.d/zeek
+  chmod 755 /usr/local/etc/rc.d/zeek
+
+  # Initialise ZeekControl (creates internal symlinks and checks config)
+  if command -v zeekctl >/dev/null 2>&1; then
+    zeekctl install
+    echo "Zeek configured successfully."
+  else
+    echo "WARNING: zeekctl not found; Zeek may not have installed correctly." >&2
+  fi
+}
+
 update_blocklists() {
   echo "Updating blocklists..."
   /usr/local/sbin/update_blocklists.sh
@@ -190,6 +231,7 @@ start_services() {
   service dnscrypt_proxy restart || true
   service dnsmasq restart || true
   service pf restart || true
+  service zeek restart || true
 }
 
 main() {
@@ -198,6 +240,7 @@ main() {
   install_packages
   install_dnscrypt_proxy
   copy_configs
+  setup_zeek
   update_blocklists
   download_resolver_list
   start_services
