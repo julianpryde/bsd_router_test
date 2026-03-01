@@ -1,0 +1,102 @@
+Here is a comprehensive plan to implement this automated "testing loop" flow. This plan details the files to create, the infrastructure configuration, and the orchestration logic required to build the Pull Request.
+
+### Phase 1: Infrastructure & Orchestration Architecture
+To achieve a fully automated loop without manual intervention, we will use a single orchestrator script (e.g., `scripts/testing_loop.sh` or a Python equivalent). 
+
+We will use **QEMU Socket Networking** to directly connect the Pi emulator's LAN interface to the x86 client's interface without needing root privileges to configure host bridges.
+
+### Phase 2: Step-by-Step Implementation Plan
+
+#### 1. Prepare the Raspberry Pi (PXE Server) Emulator
+*   **Challenge:** Pure Raspberry Pi machine emulation (`-M raspi3b`) in QEMU can be rigid regarding multiple network interfaces.
+*   **Solution:** We will use QEMU's `aarch64` `virt` machine type running a generic Debian ARM64 or Raspberry Pi OS image. It functions identically to a physical Pi but allows flexible network attachments.
+*   **Networking Setup:**
+    *   **WAN (to Host):** `-netdev user,id=wan,hostfwd=tcp::2222-:22` (Forwards host port 2222 to guest port 22 for Ansible).
+    *   **LAN (to PXE Client):** `-netdev socket,id=lan,listen=:12345` (Creates a virtual wire listening on port 12345).
+
+#### 2. Install & Enable SSHD automatically
+*   **Solution:** Instead of manually installing `sshd`, we will use `virt-customize` (part of `libguestfs-tools`) to pre-configure the base image *before* booting it.
+*   **Task in PR:** Add a build step in the orchestrator script:
+    ```bash
+    virt-customize -a rpi_base.qcow2 \
+      --install openssh-server \
+      --run-command 'systemctl enable ssh' \
+      --ssh-inject root:file:testing_key.pub
+    ```
+
+#### 3. Dynamic Ansible Inventory
+*   **Task in PR:** Create a template `ansible/inventory.ini` and have the orchestrator script write the correct parameters based on the QEMU host-forwarding.
+    ```ini
+    [pxe_server]
+    127.0.0.1 ansible_port=2222 ansible_user=root ansible_ssh_private_key_file=./testing_key
+    ```
+
+#### 4. Run the Ansible Playbook
+*   **Task in PR:** Migrate the existing `pxe_boot_config/setup.sh` logic into an Ansible playbook (`ansible/playbook.yml`).
+*   **Playbook roles will include:**
+    *   Installing `dnsmasq`, `pxelinux`, `syslinux-common`.
+    *   Configuring the LAN interface with static IP `192.168.100.1`.
+    *   Populating `/srv/tftp` with the FreeBSD bootloader and kernel.
+    *   Starting `dnsmasq`.
+
+#### 5. Emulate the x86_64 Dell Optiplex (PXE Client)
+*   **Task in PR:** Add the QEMU command to spin up the FreeBSD router client.
+*   **Hardware Emulation:** We'll use the `q35` machine type (standard modern PC, similar to an Optiplex) and an `e1000` network adapter (maps to your `em2` interface).
+*   **Networking:** Connect to the Pi's virtual wire: `-netdev socket,id=pxe,connect=127.0.0.1:12345`.
+*   **Logging:** Use `-serial file:host_output_router.log` to dump the boot output to the host.
+
+#### 6. Execute PXE Boot
+*   **Task in PR:** The QEMU command for the router will include `-boot n` to force a network boot.
+*   **Command snippet:**
+    ```bash
+    qemu-system-x86_64 -M q35 -m 2048 \
+      -boot n \
+      -netdev socket,id=pxe,connect=127.0.0.1:12345 \
+      -device e1000,netdev=pxe \
+      -serial file:host_output_router.log \
+      -nographic -daemonize
+    ```
+
+#### 7. Recover `/var/log/rc.local.log`
+*   **Challenge:** If the router boots but fails to bring up its SSH/networking properly, we cannot SCP the file out.
+*   **Solution:** Once the automated test timer finishes or the QEMU process exits, use `guestfish` to mount the router's virtual disk offline and extract the log directly.
+*   **Command snippet:**
+    ```bash
+    virt-copy-out -a freebsd_router.qcow2 /var/log/rc.local.log ./test_artifacts/
+    ```
+
+### Phase 3: PR File Structure to Create
+
+Your PR will introduce the following directory structure:
+
+```text
+├── scripts/
+│   ├── run_test_loop.sh        # The main orchestrator script (spins up VMs, runs ansible, tears down, extracts logs)
+│   └── prepare_images.sh       # Downloads and injects SSH keys into base qcow2 images via virt-customize
+├── ansible/
+│   ├── inventory.ini           # Ansible connection details
+│   ├── playbook.yml            # Configures the Pi emulator (dnsmasq, tftp, network)
+│   └── roles/
+│       └── pxe_server/         # Ported logic from pxe_boot_config/setup.sh
+├── .github/workflows/
+│   └── testing_loop.yml        # (Optional) GitHub Actions workflow to run this automatically
+└── test_artifacts/             # Ignored via .gitignore, where rc.local.log and serial outputs are saved
+```
+
+### Phase 4: The Loop Execution Flow (Orchestrator Logic)
+
+The `scripts/run_test_loop.sh` will act as the master controller for Copilot:
+
+1.  **Init:** Generate temporary SSH keys (`ssh-keygen`).
+2.  **Prep:** Run `prepare_images.sh` to inject keys into the Pi image.
+3.  **Boot Server:** Start the Pi QEMU process in the background (`-daemonize`).
+4.  **Wait:** Loop `nc -z 127.0.0.1 2222` until the Pi's SSH port is responsive.
+5.  **Configure:** Execute `ansible-playbook -i ansible/inventory.ini ansible/playbook.yml`.
+6.  **Boot Client:** Start the x86 QEMU process (FreeBSD router) in the background, writing to `host_output_router.log`.
+7.  **Monitor:** Tail the `host_output_router.log` for a specific success/failure string, or wait a fixed timeout (e.g., 5 minutes).
+8.  **Shutdown:** Kill both QEMU PIDs.
+9.  **Extract:** Run `virt-copy-out` to pull `/var/log/rc.local.log` from the router's disk image.
+10. **Analyze:** Feed `rc.local.log` and `host_output_router.log` back to standard output so Copilot can read it and suggest the next iteration.
+
+### Next Steps
+Would you like me to use the `github-coding-agent` tool to immediately create this PR in your repository, or would you prefer I output the code for `run_test_loop.sh` and `playbook.yml` here for you to review first?
