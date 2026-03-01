@@ -2,6 +2,15 @@
 pxe_boot_config/FreeBSD-15.0*
 *.txz
 
+# QEMU testing files
+images/
+test_artifacts/
+testing_key
+testing_key.pub
+*.qcow2
+*.log
+*.pid
+
 # Metadata files
 .DS_Store
 Thumbs.db
