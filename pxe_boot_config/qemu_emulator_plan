@@ -15,13 +15,18 @@ We will use **QEMU Socket Networking** to directly connect the Pi emulator's LAN
     *   **LAN (to PXE Client):** `-netdev socket,id=lan,listen=:12345` (Creates a virtual wire listening on port 12345).
 
 #### 2. Install & Enable SSHD automatically
-*   **Solution:** Instead of manually installing `sshd`, we will use `virt-customize` (part of `libguestfs-tools`) to pre-configure the base image *before* booting it.
-*   **Task in PR:** Add a build step in the orchestrator script:
+*   **Solution:** We use `virt-customize` (part of `libguestfs-tools`) to pre-configure the base image *before* booting it. If `virt-customize` fails due to libguestfs/supermin issues, the script automatically falls back to cloud-init.
+*   **Task in PR:** The `scripts/prepare_images.sh` handles this preparation:
     ```bash
+    # Primary method (virt-customize)
     virt-customize -a rpi_base.qcow2 \
       --install openssh-server \
       --run-command 'systemctl enable ssh' \
       --ssh-inject root:file:testing_key.pub
+    
+    # Fallback method (cloud-init)
+    # Creates seed.img with SSH keys and openssh-server installation
+    # Requires adding: -drive file=images/cloud-init/seed.img,if=virtio,format=raw
     ```
 
 #### 3. Dynamic Ansible Inventory
@@ -76,7 +81,7 @@ We will use **QEMU Socket Networking** to directly connect the Pi emulator's LAN
 
 #### 8. Complete Router Configuration via rc.local
 *   **What Happens Automatically:**
-    The playbook already stages config files at `/srv/nfs/freebsd/root/router_config/`. The router's `rc.local` (copied by playbook) orchestrates the remaining setup:
+    The playbook stages both `router_config/setup.sh` and `rc.local` at `/srv/nfs/freebsd/root/`. On boot, `rc.local` sources `router_config/setup.sh` and executes all setup functions in order:
     1. Create `_dnscrypt-proxy` user
     2. Bootstrap and install FreeBSD packages (`dnsmasq`, `ca_root_nss`)
     3. Download and install dnscrypt-proxy binary
@@ -87,8 +92,8 @@ We will use **QEMU Socket Networking** to directly connect the Pi emulator's LAN
     8. Start routing, dnsmasq, dnscrypt-proxy, and pf services
     9. Log all output to `/var/log/rc.local.log`
 
-*   **Key Difference from Physical Setup:**
-    For physical deployment, `router_config/setup.sh` is run manually after boot. In the emulated environment, this logic is embedded in the `rc.local` script and runs automatically on boot.
+*   **Unified Setup Path:**
+    Both QEMU and physical deployment use the exact same `rc.local` and `router_config/setup.sh`. This ensures the test environment validates the production deployment path—no differences between how the router boots in QEMU vs. on actual hardware.
 
 #### 9. Recover `/var/log/rc.local.log`
 *   **Solution:** Once the automated test completes or the QEMU process exits, copy logs from the router's disk image:
@@ -104,10 +109,16 @@ Your PR will introduce the following directory structure:
 ```text
 ├── scripts/
 │   ├── run_test_loop.sh        # The main orchestrator script (spins up VMs, runs ansible, tears down, extracts logs)
-│   └── prepare_images.sh       # Downloads and injects SSH keys into base qcow2 images via virt-customize
+│   └── prepare_images.sh       # Downloads Debian image, injects SSH keys (virt-customize or cloud-init fallback)
 ├── pxe_boot_config/
 │   ├── inventory.ini           # Ansible connection details for QEMU emulator (127.0.0.1:2222)
 │   └── playbook.yml            # (Already exists) Configures the Pi emulator (dnsmasq, tftp, network, NFS)
+├── images/
+│   ├── rpi_base.qcow2          # Debian ARM64 cloud image (downloaded by prepare_images.sh)
+│   └── cloud-init/             # Cloud-init seed image (if virt-customize fails)
+│       ├── seed.img            # ISO with user-data and meta-data for SSH key injection
+│       ├── user-data           # Cloud-init configuration
+│       └── meta-data           # Instance metadata
 ├── .github/workflows/
 │   └── testing_loop.yml        # (Optional) GitHub Actions workflow to run this automatically
 └── test_artifacts/             # Ignored via .gitignore, where rc.local.log and serial outputs are saved
@@ -118,10 +129,10 @@ Your PR will introduce the following directory structure:
 The `scripts/run_test_loop.sh` will act as the master controller:
 
 1.  **Init:** Generate temporary SSH keys.
-2.  **Prep:** Run `prepare_images.sh` to inject SSH keys into the Pi image.
+2.  **Prep:** Run `prepare_images.sh` to inject SSH keys into the Pi image (uses cloud-init if virt-customize fails).
 3.  **Disk:** Create the router's virtual disk image (20 GB QCOW2).
-4.  **Boot Server:** Start the Pi QEMU process in the background.
-5.  **Wait:** Poll `nc -z 127.0.0.1 2222` until the Pi's SSH port is responsive (max 60 seconds).
+4.  **Boot Server:** Start the Pi QEMU process in the background (with cloud-init seed.img if generated).
+5.  **Wait:** Poll `nc -z 127.0.0.1 2222` until the Pi's SSH port is responsive (max 60 seconds, may take longer on first boot with cloud-init).
 6.  **Configure:** Execute the Ansible playbook to set up PXE, TFTP, NFS, and stage router configs.
 7.  **Boot Client:** Start the x86 QEMU router in the background with three interfaces (WAN, LAN, Management).
 8.  **Monitor:** Tail `host_output_router.log` for completion marker or 5-minute timeout.
@@ -202,6 +213,7 @@ scripts/prepare_images.sh
 qemu-system-aarch64 \
   -M virt -cpu cortex-a57 -m 2048 \
   -drive if=virtio,file=images/rpi_base.qcow2,format=qcow2 \
+  -drive file=images/cloud-init/seed.img,if=virtio,format=raw \
   -netdev user,id=wan,hostfwd=tcp::2222-:22 \
   -device virtio-net,netdev=wan \
   -netdev socket,id=lan,listen=:12345 \
@@ -211,7 +223,8 @@ qemu-system-aarch64 \
 
 #### 2b. Verify Pi is reachable
 ```bash
-# Wait ~30 seconds for boot
+# Wait ~30-60 seconds for boot
+# (First boot with cloud-init may take longer as it installs packages)
 nc -zv 127.0.0.1 2222
 ```
 
@@ -315,25 +328,31 @@ rm host_output_router.log
 - **Router LAN:** Isolated user-mode network (for future client testing)
 - **Router Persistence:** QCOW2 disk for logs and configs
 
-### Phase 8: Separation of Concerns
+### Phase 8: Shared Setup Architecture
 
-**`router_config/setup.sh` (Physical Deployment)**
-- Run manually on the physical Optiplex after FreeBSD installation
-- Handles one-time configuration tasks
-- Independent of PXE/NFS infrastructure
-- Reusable for maintenance and updates
+The same code is used in both QEMU and physical environments, with `rc.local` automating what was previously manual:
 
-**`scripts/run_test_loop.sh` (Emulated Testing)**
+**`router_config/setup.sh` (Shared Setup Functions)**
+- Contains all configuration logic as individual shell functions
+- No hardcoded execution order; designed to be sourced by other scripts
+- Functions include: `create_dnscrypt_proxy_user()`, `install_packages()`, `install_dnscrypt_proxy()`, `copy_configs()`, `update_blocklists()`, `download_resolver_list()`, `wait_for_wan_interface()`, `start_services()`
+- Can still be run manually if needed: `source router_config/setup.sh && create_dnscrypt_proxy_user`
+- Works in both QEMU (diskless NFS boot) and physical (standard FreeBSD install) environments
+
+**`pxe_boot_config/rc.local` (Unified Boot Orchestrator)**
+- Sources `router_config/setup.sh` to import all setup functions
+- Calls setup functions in order: user creation → package install → dnscrypt-proxy setup → config copy → blocklist update → resolver list → wait for WAN → start services
+- Logs all output to `/var/log/rc.local.log` for debugging
+- **Used in both environments:**
+  - QEMU: Runs automatically on diskless NFS boot (part of playbook staging)
+  - Physical: Added to `/etc/rc.local` after manual FreeBSD installation, ensures same setup path as emulated testing
+- Single code path validates that testing environment matches production deployment
+
+**`scripts/run_test_loop.sh` (QEMU Orchestration)**
 - Orchestrates the full QEMU emulation flow
-- Stages router configs via Ansible playbook
-- Embeds rc.local logic (functions from setup.sh adapted for boot automation)
-- Isolated from production-like deployment
-
-**`pxe_boot_config/rc.local` (Router Initialization)**
-- Runs automatically on boot in the emulated environment
-- Calls functions similar to `router_config/setup.sh` (create user, install packages, copy configs, start services)
-- Tests the full automation pipeline
-- Not used on physical deployment (where `setup.sh` is run manually)
+- Stages router configs via Ansible playbook (which copies rc.local and router_config/setup.sh to NFS root)
+- Monitors boot completion via rc.local.log
+- Isolated to test infrastructure only; not needed for physical deployment
 
 ### Next Steps
 
