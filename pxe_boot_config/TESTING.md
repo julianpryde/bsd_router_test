@@ -145,8 +145,10 @@ sudo umount /mnt/test
    - pxeboot loads and mounts NFS
    - pxeboot chain-loads to loader (via NFS)
    - Loader reads loader.conf and loads kernel (via NFS)
-   - Kernel boots and mounts ZFS root from local storage
-   - FreeBSD initializes and router is ready
+   - Kernel boots and mounts NFS root from Debian VM
+   - `rc.local` automatically launches `bsdinstall`
+   - `bsdinstall` installs FreeBSD to local storage
+   - System reboots from local storage and router is ready
 
 4. **Monitor Debian VM** during boot:
    ```bash
@@ -185,7 +187,7 @@ Found int 13h unsafe boot hook at 0xbe117 (c800:117)
 FreeBSD/x86 bootstrap loader, Revision 3.0
 Booting [BootFS]/boot/kernel/kernel...
 ...
-[Kernel mounts ZFS root and boots normally]
+[Kernel mounts NFS root and launches bsdinstall]
 ```
 
 ## Troubleshooting
@@ -241,7 +243,7 @@ This indicates pxeboot loaded but can't mount NFS or chain-load loader. Debug wi
    ```bash
    cat /srv/nfs/freebsd/boot/loader.conf
    ```
-   Should contain: `vfs.root.mountfrom="zfs:zroot/ROOT/default"`
+   Should contain: `vfs.root.mountfrom="nfs:192.168.100.1:/srv/nfs/freebsd"`
 
 5. **Verify pxeboot is correct**:
    ```bash

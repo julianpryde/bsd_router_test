@@ -1,0 +1,335 @@
+#!/bin/sh
+# Manual bsdinstall execution - Option B approach
+# This allows us to copy files BEFORE the filesystem is unmounted
+
+set -e  # Exit on any error
+set -x  # Print commands as they execute
+exec >> /var/log/rc.local.log 2>&1  # Log all output
+
+MARKER="/var/.installation_complete"
+BSDINSTALL_CHROOT="/mnt"
+
+if [ ! -f "$MARKER" ]; then
+  echo "===================================================="
+  echo "Starting manual FreeBSD installation to da0..."
+  echo "Date: $(date)"
+  echo "===================================================="
+  echo "====================================================" > /dev/console
+  echo "Starting manual FreeBSD installation to da0..." > /dev/console
+  echo "====================================================" > /dev/console
+  logger -t bsdinstall "Starting manual FreeBSD installation to da0..."
+
+  # Pre-flight checks
+  echo "Pre-flight checks:"
+  echo "1. Checking for router_config staging directory..."
+  if [ ! -d /root/router_config ]; then
+    echo "ERROR: /root/router_config not found!" | tee /dev/console
+    ls -la /root/ || true
+    exit 1
+  fi
+  echo "   ✓ /root/router_config exists"
+
+  echo "2. Listing router_config contents:"
+  ls -la /root/router_config
+
+  echo "3. Checking for required files:"
+  for file in rc.conf pf.conf dnsmasq.conf dnscrypt-proxy dnscrypt-proxy.toml; do
+    if [ -f "/root/router_config/$file" ]; then
+      echo "   ✓ $file"
+    else
+      echo "   ✗ $file MISSING!" | tee /dev/console
+      # Don't exit - some files may be optional
+    fi
+  done
+
+  # Ensure network is ready
+  echo "Waiting for network..." | tee /dev/console
+  TIMEOUT=60
+  ELAPSED=0
+  until host pkg.freebsd.org >/dev/null 2>&1 || [ $ELAPSED -ge $TIMEOUT ]; do
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+  done
+  echo "✓ Network ready" | tee /dev/console
+
+  # Set environment variables for bsdinstall
+  export DISTRIBUTIONS="kernel.txz base.txz"
+  export BSDINSTALL_DISTSITE="file:///usr/freebsd-dist"
+  export BSDINSTALL_CHROOT="/mnt"
+  export TERM=xterm
+
+  echo "=============================================="
+  echo "Phase 1: Partitioning disk da0..."
+  echo "=============================================="
+  # Destroy existing partition scheme if any
+  gpart destroy -F da0 2>/dev/null || true
+  
+  # Create GPT partition table
+  gpart create -s gpt da0 || {
+    echo "ERROR: Failed to create GPT partition table!"
+    exit 1
+  }
+  
+  # Create partitions: boot (512K), swap (2G), zfs (rest)
+  gpart add -t freebsd-boot -s 512K -l boot0 da0 || {
+    echo "ERROR: Failed to create boot partition!"
+    exit 1
+  }
+  
+  gpart add -t freebsd-swap -s 2G -l swap0 da0 || {
+    echo "ERROR: Failed to create swap partition!"
+    exit 1
+  }
+  
+  gpart add -t freebsd-zfs -l zfs0 da0 || {
+    echo "ERROR: Failed to create ZFS partition!"
+    exit 1
+  }
+  
+  # Install bootcode
+  gpart bootcode -b /boot/pmbr -p /boot/gptzfsboot -i 1 da0 || {
+    echo "ERROR: Failed to install bootcode!"
+    exit 1
+  }
+  
+  echo "Partition layout created successfully"
+
+  echo "=============================================="
+  echo "Phase 2: Creating ZFS pool..."
+  echo "=============================================="
+  # Create ZFS pool on da0p3 (the zfs partition)
+  zpool create -f -o altroot=/mnt -O compression=on -O atime=off -m none zroot /dev/gpt/zfs0 || {
+    echo "ERROR: Failed to create ZFS pool!"
+    exit 1
+  }
+  
+  # Create ZFS datasets
+  zfs create -o mountpoint=none zroot/ROOT || {
+    echo "ERROR: Failed to create ROOT dataset!"
+    exit 1
+  }
+  
+  zfs create -o mountpoint=/ zroot/ROOT/default || {
+    echo "ERROR: Failed to create default dataset!"
+    exit 1
+  }
+  
+  zfs create -o mountpoint=/tmp -o exec=on -o setuid=off zroot/tmp || {
+    echo "ERROR: Failed to create tmp dataset!"
+    exit 1
+  }
+  
+  zfs create -o mountpoint=/usr -o canmount=off zroot/usr || {
+    echo "ERROR: Failed to create usr dataset!"
+    exit 1
+  }
+  
+  zfs create zroot/usr/home || {
+    echo "ERROR: Failed to create home dataset!"
+    exit 1
+  }
+  
+  zfs create -o setuid=off zroot/usr/ports || {
+    echo "ERROR: Failed to create ports dataset!"
+    exit 1
+  }
+  
+  zfs create zroot/usr/src || {
+    echo "ERROR: Failed to create src dataset!"
+    exit 1
+  }
+  
+  zfs create -o mountpoint=/var -o canmount=off zroot/var || {
+    echo "ERROR: Failed to create var dataset!"
+    exit 1
+  }
+  
+  zfs create -o exec=off -o setuid=off zroot/var/audit || {
+    echo "ERROR: Failed to create audit dataset!"
+    exit 1
+  }
+  
+  zfs create -o exec=off -o setuid=off zroot/var/crash || {
+    echo "ERROR: Failed to create crash dataset!"
+    exit 1
+  }
+  
+  zfs create -o exec=off -o setuid=off zroot/var/log || {
+    echo "ERROR: Failed to create log dataset!"
+    exit 1
+  }
+  
+  zfs create -o atime=on zroot/var/mail || {
+    echo "ERROR: Failed to create mail dataset!"
+    exit 1
+  }
+  
+  zfs create -o setuid=off zroot/var/tmp || {
+    echo "ERROR: Failed to create var/tmp dataset!"
+    exit 1
+  }
+  
+  # Set boot filesystem
+  zpool set bootfs=zroot/ROOT/default zroot || {
+    echo "ERROR: Failed to set boot filesystem!"
+    exit 1
+  }
+  
+  echo "ZFS pool created successfully"
+  
+  # Fix permissions
+  chmod 1777 /mnt/tmp
+  chmod 1777 /mnt/var/tmp
+
+  echo "=============================================="
+  echo "Phase 3: Running bsdinstall distfetch..."
+  echo "=============================================="
+  bsdinstall distfetch || {
+    echo "ERROR: bsdinstall distfetch failed!"
+    exit 1
+  }
+
+  echo "=============================================="
+  echo "Phase 4: Running bsdinstall distextract..."
+  echo "=============================================="
+  bsdinstall distextract || {
+    echo "ERROR: bsdinstall distextract failed!"
+    exit 1
+  }
+
+  # NOW copy files - da0 is mounted at /mnt and we are NOT in a chroot
+  echo "=============================================="
+  echo "Phase 5: Copying custom configuration files..."
+  echo "=============================================="
+
+  # Verify mount
+  if [ ! -d "$BSDINSTALL_CHROOT" ]; then
+    echo "ERROR: $BSDINSTALL_CHROOT not found!"
+    exit 1
+  fi
+
+  echo "Current mount points:"
+  mount || true
+
+  # Copy resolv.conf
+  echo "Copying /etc/resolv.conf..."
+  cp -v /etc/resolv.conf "$BSDINSTALL_CHROOT/etc/resolv.conf" || {
+    echo "ERROR: Failed to copy resolv.conf"
+    exit 1
+  }
+
+  # Copy router configuration files from staging
+  echo "Copying router configuration files..."
+  ! [ -f /root/router_config/rc.conf ] || cp -v /root/router_config/rc.conf "$BSDINSTALL_CHROOT/etc/rc.conf"
+  ! [ -f /root/router_config/pf.conf ] || cp -v /root/router_config/pf.conf "$BSDINSTALL_CHROOT/etc/pf.conf"
+
+  # Create necessary directories
+  echo "Creating directory structure..."
+  mkdir -p "$BSDINSTALL_CHROOT/usr/local/etc/rc.d"
+  mkdir -p "$BSDINSTALL_CHROOT/usr/local/etc/dnscrypt-proxy"
+  mkdir -p "$BSDINSTALL_CHROOT/usr/local/sbin"
+  mkdir -p "$BSDINSTALL_CHROOT/var/log/dnscrypt-proxy"
+  mkdir -p "$BSDINSTALL_CHROOT/var/cache/dnscrypt-proxy"
+
+  # Copy application configs
+  echo "Copying application configuration files..."
+  ! [ -f /root/router_config/dnsmasq.conf ] || \
+    cp -v /root/router_config/dnsmasq.conf "$BSDINSTALL_CHROOT/usr/local/etc/"
+  ! [ -f /root/router_config/dnscrypt_proxy ] || \
+    cp -v /root/router_config/dnscrypt_proxy "$BSDINSTALL_CHROOT/usr/local/etc/rc.d/"
+  ! [ -f /root/router_config/dnscrypt-proxy.toml ] || \
+    cp -v /root/router_config/dnscrypt-proxy.toml "$BSDINSTALL_CHROOT/usr/local/etc/dnscrypt-proxy/"
+  ! [ -f /root/router_config/blocklist.txt ] || \
+    cp -v /root/router_config/blocklist.txt "$BSDINSTALL_CHROOT/usr/local/etc/dnscrypt-proxy/"
+  ! [ -f /root/router_config/update_blocklists.sh ] || \
+    cp -v /root/router_config/update_blocklists.sh "$BSDINSTALL_CHROOT/usr/local/sbin/"
+  ! [ -f /root/router_config/dnscrypt-proxy ] || \
+    cp -v /root/router_config/dnscrypt-proxy "$BSDINSTALL_CHROOT/usr/local/sbin/"
+
+  # Copy resolver lists
+  ! [ -f /root/router_config/public-resolvers.md ] || \
+    cp -v /root/router_config/public-resolvers.md "$BSDINSTALL_CHROOT/var/cache/dnscrypt-proxy/"
+  ! [ -f /root/router_config/public-resolvers.md.minisig ] || \
+    cp -v /root/router_config/public-resolvers.md.minisig "$BSDINSTALL_CHROOT/var/cache/dnscrypt-proxy/"
+
+  echo "=============================================="
+  echo "Phase 6: Installing packages in chroot..."
+  echo "=============================================="
+
+  # Enable swap to prevent OOM during pkg operations
+  swapon /dev/gpt/swap0 || echo "Warning: Failed to enable swap"
+
+  echo "Bootstrapping pkg..."
+  chroot "$BSDINSTALL_CHROOT" env ASSUME_ALWAYS_YES=yes pkg bootstrap -y || {
+    echo "ERROR: pkg bootstrap failed"
+    swapoff /dev/gpt/swap0 || true
+    exit 1
+  }
+
+  echo "Installing dnsmasq and ca_root_nss..."
+  chroot "$BSDINSTALL_CHROOT" env ASSUME_ALWAYS_YES=yes pkg install -y dnsmasq ca_root_nss || {
+    echo "ERROR: pkg install failed"
+    swapoff /dev/gpt/swap0 || true
+    exit 1
+  }
+  swapoff /dev/gpt/swap0 || echo "Warning: Failed to disable swap"
+
+  echo "Creating dnscrypt-proxy user..."
+  chroot "$BSDINSTALL_CHROOT" pw useradd _dnscrypt-proxy -d /nonexistent \
+    -s /usr/sbin/nologin -c 'dnscrypt-proxy user' || \
+    echo "Warning: failed to create _dnscrypt-proxy user (may already exist)"
+
+  echo "Setting ownership on dnscrypt-proxy directories..."
+  chroot "$BSDINSTALL_CHROOT" chown -R _dnscrypt-proxy:_dnscrypt-proxy \
+    /var/log/dnscrypt-proxy /var/cache/dnscrypt-proxy || \
+    echo "Warning: Failed to set ownership"
+
+  echo "=============================================="
+  echo "Phase 7: Finalizing installation..."
+  echo "=============================================="
+  
+  # Write ZFS configuration
+  echo 'zfs_enable="YES"' >> "$BSDINSTALL_CHROOT/etc/rc.conf"
+  
+  # Create /boot/loader.conf with ZFS settings
+  cat > "$BSDINSTALL_CHROOT/boot/loader.conf" <<'LOADER_EOF'
+zfs_load="YES"
+vfs.root.mountfrom="zfs:zroot/ROOT/default"
+LOADER_EOF
+  
+  # Update /etc/fstab for swap
+  cat > "$BSDINSTALL_CHROOT/etc/fstab" <<'FSTAB_EOF'
+# Device        Mountpoint      FStype  Options Dump    Pass#
+/dev/gpt/swap0  none            swap    sw      0       0
+FSTAB_EOF
+  
+  echo "Creating /boot/zfs/zpool.cache..."
+  mkdir -p "$BSDINSTALL_CHROOT/boot/zfs"
+  zpool set cachefile="$BSDINSTALL_CHROOT/boot/zfs/zpool.cache" zroot
+  
+  echo "=============================================="
+  echo "Phase 8: Unmounting and exporting pool..."
+  echo "=============================================="
+  
+  # Unmount all ZFS datasets
+  zfs unmount -a || echo "Warning: ZFS unmount failed"
+  
+  # Export the pool
+  zpool export zroot || {
+    echo "ERROR: Failed to export zpool!"
+    exit 1
+  }
+  
+  echo "Pool exported successfully"
+
+  # Mark installation as complete
+  touch "$MARKER"
+
+  echo "===================================" | tee /dev/console
+  echo "Installation completed successfully!" | tee /dev/console
+  echo "Rebooting in 10 seconds..." | tee /dev/console
+  echo "===================================" | tee /dev/console
+  logger -t bsdinstall "Installation complete. Rebooting in 10 seconds..."
+  sleep 10
+  reboot
+fi

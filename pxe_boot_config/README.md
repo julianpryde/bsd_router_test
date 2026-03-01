@@ -20,8 +20,11 @@ This folder contains configuration files for a Debian VM that provides PXE boot 
 2. Debian VM responds with IP address, pxeboot filename, and NFS mount path
 3. Router downloads pxeboot via TFTP
 4. pxeboot mounts NFS and loads kernel and loader files
-5. Kernel boots from NFS root filesystem (diskless boot)
-6. All other router services (WAN, LAN) operate independently through em0/em1
+5. Kernel boots from NFS root filesystem (diskless boot into installer environment)
+6. `rc.local` automatically launches `bsdinstall`
+7. `bsdinstall` partitions the local hard drive (`da0`) and installs FreeBSD
+8. `bsdinstall` copies router configuration files to the new local installation
+9. System reboots from the local hard drive as a fully configured router
 
 ## Quick Start - Ansible (Recommended)
 
@@ -145,7 +148,7 @@ ls -la /srv/tftp/
 
 ## FreeBSD Release Files
 
-The setup script downloads FreeBSD release files (`base.txz` and `kernel.txz`) from the remote HTTP server and sets up **NFS-based PXE boot with NFS root filesystem** (diskless boot).
+The setup script downloads FreeBSD release files (`base.txz` and `kernel.txz`) from the remote HTTP server and sets up an **NFS-based PXE boot environment** that automatically installs FreeBSD to the local hard drive.
 
 ### Required Files
 
@@ -175,7 +178,7 @@ You should see:
 - `boot/loader.conf` with NFS root boot configuration
 - `boot/kernel/kernel` available via NFS
 
-### Boot Process Flow (NFS Root - Diskless Boot)
+### Boot Process Flow (NFS Root - Automated Installer)
 
 1. Router sends PXE boot request on em2
 2. dnsmasq responds with:
@@ -188,13 +191,19 @@ You should see:
 6. Loader reads `/boot/loader.conf` (from NFS mount) for boot configuration
 7. Loader downloads kernel from `/boot/kernel/kernel` (via NFS) and executes it
 8. Kernel mounts NFS root filesystem from 192.168.100.1:/srv/nfs/freebsd
-9. FreeBSD boots as a diskless client with root filesystem served entirely over NFS
+9. FreeBSD boots as a diskless client into the installer environment
+10. `/etc/rc.local` automatically launches `bsdinstall` with `/etc/installerconfig`
+11. `bsdinstall` partitions the local hard drive (`da0`), extracts `base.txz` and `kernel.txz` from `/usr/freebsd-dist`, and installs the system
+12. `bsdinstall` copies router configuration files from the staging directory to the new local installation
+13. System reboots from the local hard drive as a fully configured router
 
-**Note:** The diskless boot process requires:
+**Note:** The automated installation process requires:
 - pxeboot (TFTP): Minimal first-stage bootloader
 - Complete boot/ directory structure (NFS): Including loader, scripts, and kernel
 - loader.conf configured for NFS root mount
 - NFS export accessible to the booting client with read-write permissions (rw)
+- `base.txz` and `kernel.txz` available in `/usr/freebsd-dist` for `bsdinstall`
+- `installerconfig` and `rc.local` configured to automate the installation
 
 ## Notes
 - Uses Raspberry Pi OS defaults where applicable

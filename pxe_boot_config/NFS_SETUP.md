@@ -2,7 +2,7 @@
 
 ## Overview
 
-FreeBSD's `pxeboot` uses NFS (Network File System) to load the kernel and loader files. Once booted, the kernel mounts the ZFS root filesystem from local storage.
+FreeBSD's `pxeboot` uses NFS (Network File System) to load the kernel and loader files. Once booted, the kernel mounts the NFS root filesystem to run the automated `bsdinstall` script, which installs FreeBSD to the local hard drive.
 
 This document explains how the NFS setup works and how to verify it.
 
@@ -16,9 +16,15 @@ Debian/Linux PXE Server (192.168.100.1)
      ├─ boot/
      │  ├─ kernel/
      │  │  └─ kernel (loaded by pxeboot/loader via NFS)
-     │  ├─ loader.conf (specifies vfs.root.mountfrom="zfs:zroot/ROOT/default")
+     │  ├─ loader.conf (specifies vfs.root.mountfrom="nfs:192.168.100.1:/srv/nfs/freebsd")
      │  ├─ loader_lua, loader_4th (stage 2 bootloaders)
      │  └─ [other boot files]
+     ├─ etc/
+     │  ├─ installerconfig (bsdinstall automation script)
+     │  └─ rc.local (triggers bsdinstall on boot)
+     ├─ usr/freebsd-dist/
+     │  ├─ base.txz
+     │  └─ kernel.txz
      └─ (accessed by FreeBSD client at 192.168.100.2)
 ```
 
@@ -182,7 +188,7 @@ FreeBSD `pxeboot` typically requires NFSv3 over UDP. Ensure UDP and v3 are enabl
 3. Verify loader.conf is correct:
    ```bash
    cat /srv/nfs/freebsd/boot/loader.conf
-   # Should contain: vfs.root.mountfrom="zfs:zroot/ROOT/default"
+   # Should contain: vfs.root.mountfrom="nfs:192.168.100.1:/srv/nfs/freebsd"
    ```
 
 4. Check NFS mounts from client logs during boot
@@ -198,9 +204,7 @@ FreeBSD `pxeboot` typically requires NFSv3 over UDP. Ensure UDP and v3 are enabl
 
 - NFS can be slower than TFTP for large files
 - The kernel and loader files are relatively small (tens of MB)
-- After boot, system runs from local ZFS storage (fast)
+- After installation, the system runs from local ZFS storage (fast)
 
 For faster boot in production, consider:
-- Caching boot files in ramdisk on FreeBSD client
-- Using diskless NFS root (not applicable here - we use ZFS)
 - Optimizing network MTU size (jumbo frames if network supports it)
