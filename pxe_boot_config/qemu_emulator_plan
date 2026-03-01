@@ -1,0 +1,343 @@
+Here is a comprehensive plan to implement this automated "testing loop" flow. This plan details the files to create, the infrastructure configuration, and the orchestration logic required to build the Pull Request.
+
+### Phase 1: Infrastructure & Orchestration Architecture
+To achieve a fully automated loop without manual intervention, we will use a single orchestrator script (e.g., `scripts/testing_loop.sh` or a Python equivalent). 
+
+We will use **QEMU Socket Networking** to directly connect the Pi emulator's LAN interface to the x86 client's interface without needing root privileges to configure host bridges.
+
+### Phase 2: Step-by-Step Implementation Plan
+
+#### 1. Prepare the Raspberry Pi (PXE Server) Emulator
+*   **Challenge:** Pure Raspberry Pi machine emulation (`-M raspi3b`) in QEMU can be rigid regarding multiple network interfaces.
+*   **Solution:** We will use QEMU's `aarch64` `virt` machine type running a generic Debian ARM64 or Raspberry Pi OS image. It functions identically to a physical Pi but allows flexible network attachments.
+*   **Networking Setup:**
+    *   **WAN (to Host):** `-netdev user,id=wan,hostfwd=tcp::2222-:22` (Forwards host port 2222 to guest port 22 for Ansible).
+    *   **LAN (to PXE Client):** `-netdev socket,id=lan,listen=:12345` (Creates a virtual wire listening on port 12345).
+
+#### 2. Install & Enable SSHD automatically
+*   **Solution:** Instead of manually installing `sshd`, we will use `virt-customize` (part of `libguestfs-tools`) to pre-configure the base image *before* booting it.
+*   **Task in PR:** Add a build step in the orchestrator script:
+    ```bash
+    virt-customize -a rpi_base.qcow2 \
+      --install openssh-server \
+      --run-command 'systemctl enable ssh' \
+      --ssh-inject root:file:testing_key.pub
+    ```
+
+#### 3. Dynamic Ansible Inventory
+*   **Task in PR:** Create a template `inventory.ini` file and have the orchestrator script write the correct parameters based on the QEMU host-forwarding.
+    ```ini
+    [pxe_server]
+    127.0.0.1 ansible_port=2222 ansible_user=root ansible_ssh_private_key_file=./testing_key
+    ```
+
+#### 4. Run the Ansible Playbook
+*   **Task in PR:** Use the existing `pxe_boot_config/playbook.yml` which already handles:
+    *   Installing `dnsmasq`, `nfs-kernel-server`, and required utilities.
+    *   Configuring the LAN interface with static IP `192.168.100.1`.
+    *   Setting up `/srv/tftp` with the FreeBSD PXE bootloader.
+    *   Extracting FreeBSD base and kernel to NFS root.
+    *   Configuring router files (rc.conf, pf.conf, dnsmasq.conf, dnscrypt-proxy).
+    *   Starting all required services.
+
+#### 5. Emulate the x86_64 Dell Optiplex (PXE Client)
+*   **Task in PR:** Add the QEMU command to spin up the FreeBSD router client with three network interfaces.
+*   **Hardware Emulation:** We'll use the `q35` machine type (standard modern PC, similar to an Optiplex) and three `e1000` network adapters.
+*   **Network Interfaces:**
+    *   **em0 (WAN):** `-netdev user,id=wan,hostfwd=tcp::2200-:22,hostfwd=udp::53-:53` (Host DHCP, port forward for testing)
+    *   **em1 (LAN):** Isolated vlan-based bridge (logical for future client testing)
+    *   **em2 (Management):** `-netdev socket,id=mgmt,connect=127.0.0.1:12345` (Connected to Pi)
+*   **Logging:** Use `-serial file:host_output_router.log` to dump boot and rc.local output to the host.
+
+#### 6. Create Router Virtual Disk
+*   **Task in PR:** Before booting the router, create a QCOW2 disk image for log persistence.
+*   **Command snippet:**
+    ```bash
+    qemu-img create -f qcow2 freebsd_router.qcow2 20G
+    ```
+*   **Note:** The router will boot diskless from NFS, but the disk provides storage for `/var/log` and other persistent state.
+
+#### 7. Execute PXE Boot
+*   **Task in PR:** The QEMU command for the router will include `-boot n` to force a network boot.
+*   **Command snippet:**
+    ```bash
+    qemu-system-x86_64 -M q35 -m 2048 \
+      -boot n \
+      -drive if=virtio,file=freebsd_router.qcow2,format=qcow2 \
+      -netdev user,id=wan,hostfwd=tcp::2200-:22,hostfwd=udp::53-:53 \
+      -device e1000,netdev=wan,mac=52:54:00:12:34:01 \
+      -netdev user,id=lan \
+      -device e1000,netdev=lan,mac=52:54:00:12:34:02 \
+      -netdev socket,id=mgmt,connect=127.0.0.1:12345 \
+      -device e1000,netdev=mgmt,mac=52:54:00:12:34:03 \
+      -serial file:host_output_router.log \
+      -nographic -daemonize
+    ```
+
+#### 8. Complete Router Configuration via rc.local
+*   **What Happens Automatically:**
+    The playbook already stages config files at `/srv/nfs/freebsd/root/router_config/`. The router's `rc.local` (copied by playbook) orchestrates the remaining setup:
+    1. Create `_dnscrypt-proxy` user
+    2. Bootstrap and install FreeBSD packages (`dnsmasq`, `ca_root_nss`)
+    3. Download and install dnscrypt-proxy binary
+    4. Copy staged config files to the correct system locations
+    5. Update blocklists from external sources
+    6. Download dnscrypt-proxy resolver list
+    7. Wait for WAN interface (em0) to obtain DHCP from host
+    8. Start routing, dnsmasq, dnscrypt-proxy, and pf services
+    9. Log all output to `/var/log/rc.local.log`
+
+*   **Key Difference from Physical Setup:**
+    For physical deployment, `router_config/setup.sh` is run manually after boot. In the emulated environment, this logic is embedded in the `rc.local` script and runs automatically on boot.
+
+#### 9. Recover `/var/log/rc.local.log`
+*   **Solution:** Once the automated test completes or the QEMU process exits, copy logs from the router's disk image:
+    ```bash
+    virt-copy-out -a freebsd_router.qcow2 /var/log/rc.local.log ./test_artifacts/
+    virt-copy-out -a freebsd_router.qcow2 /var/log/dnscrypt-proxy/ ./test_artifacts/
+    ```
+
+### Phase 3: PR File Structure to Create
+
+Your PR will introduce the following directory structure:
+
+```text
+├── scripts/
+│   ├── run_test_loop.sh        # The main orchestrator script (spins up VMs, runs ansible, tears down, extracts logs)
+│   └── prepare_images.sh       # Downloads and injects SSH keys into base qcow2 images via virt-customize
+├── pxe_boot_config/
+│   ├── inventory.ini           # Ansible connection details for QEMU emulator (127.0.0.1:2222)
+│   └── playbook.yml            # (Already exists) Configures the Pi emulator (dnsmasq, tftp, network, NFS)
+├── .github/workflows/
+│   └── testing_loop.yml        # (Optional) GitHub Actions workflow to run this automatically
+└── test_artifacts/             # Ignored via .gitignore, where rc.local.log and serial outputs are saved
+```
+
+### Phase 4: The Loop Execution Flow (Orchestrator Logic)
+
+The `scripts/run_test_loop.sh` will act as the master controller:
+
+1.  **Init:** Generate temporary SSH keys.
+2.  **Prep:** Run `prepare_images.sh` to inject SSH keys into the Pi image.
+3.  **Disk:** Create the router's virtual disk image (20 GB QCOW2).
+4.  **Boot Server:** Start the Pi QEMU process in the background.
+5.  **Wait:** Poll `nc -z 127.0.0.1 2222` until the Pi's SSH port is responsive (max 60 seconds).
+6.  **Configure:** Execute the Ansible playbook to set up PXE, TFTP, NFS, and stage router configs.
+7.  **Boot Client:** Start the x86 QEMU router in the background with three interfaces (WAN, LAN, Management).
+8.  **Monitor:** Tail `host_output_router.log` for completion marker or 5-minute timeout.
+9.  **Verify:** Run post-boot tests (see Testing section below).
+10. **Shutdown:** Kill both QEMU processes and clean up temporary keys.
+11. **Extract:** Use `virt-copy-out` to recover logs from the router's disk.
+12. **Report:** Display logs and test results.
+
+### Phase 5: Testing Strategy
+
+The orchestrator will verify router functionality through automated tests:
+
+#### Post-Boot Tests (while router is running)
+
+**DNS Resolution & dnscrypt-proxy**
+```bash
+# Test 1: DNS query via dnscrypt-proxy (port 53)
+nslookup google.com 127.0.0.1:53
+
+# Test 2: Verify dnscrypt-proxy is running on the router
+ssh -p 2200 root@127.0.0.1 'pgrep dnscrypt-proxy'
+
+# Test 3: Check dnscrypt-proxy logs for errors
+ssh -p 2200 root@127.0.0.1 'tail /var/log/dnscrypt-proxy/dnscrypt-proxy.log'
+```
+
+**Firewall & Interface Configuration**
+```bash
+# Test 4: Verify all three interfaces are up
+ssh -p 2200 root@127.0.0.1 'ifconfig em0 em1 em2'
+
+# Test 5: Verify WAN interface obtained DHCP
+ssh -p 2200 root@127.0.0.1 'ifconfig em0 | grep "inet"'
+
+# Test 6: Verify firewall is loaded
+ssh -p 2200 root@127.0.0.1 'pfctl -si | head -5'
+```
+
+**Internet Connectivity**
+```bash
+# Test 7: Ping external host from router
+ssh -p 2200 root@127.0.0.1 'ping -c 3 8.8.8.8'
+
+# Test 8: DNS-over-HTTPS query (dnscrypt-proxy feature)
+ssh -p 2200 root@127.0.0.1 'curl -s https://1.1.1.1/dns-query?name=google.com'
+```
+
+#### Log Recovery & Analysis (after shutdown)
+```bash
+# Extract rc.local completion log
+virt-copy-out -a freebsd_router.qcow2 /var/log/rc.local.log ./test_artifacts/
+
+# Extract dnscrypt-proxy logs
+virt-copy-out -a freebsd_router.qcow2 /var/log/dnscrypt-proxy/ ./test_artifacts/
+
+# Parse rc.local.log for errors
+grep -i "error\|fail\|panic" test_artifacts/rc.local.log
+```
+
+#### Future Tests (Phase 2)
+- Spin up a client VM on the LAN interface
+- Verify DHCP assignment from router
+- Verify DNS resolution from client through router's DNS
+- Test firewall rules (DNS filtering, port redirection)
+
+### Phase 6: Manual Testing Commands
+
+Before running the full orchestrator, test individual components manually:
+
+#### 1. Prepare the Pi image
+```bash
+cd /home/julian/homelab/bsd_router_test
+scripts/prepare_images.sh
+```
+
+#### 2a. Start the Pi emulator (terminal 1)
+```bash
+qemu-system-aarch64 \
+  -M virt -cpu cortex-a57 -m 2048 \
+  -drive if=virtio,file=images/rpi_base.qcow2,format=qcow2 \
+  -netdev user,id=wan,hostfwd=tcp::2222-:22 \
+  -device virtio-net,netdev=wan \
+  -netdev socket,id=lan,listen=:12345 \
+  -device virtio-net,netdev=lan \
+  -nographic -serial mon:stdio
+```
+
+#### 2b. Verify Pi is reachable
+```bash
+# Wait ~30 seconds for boot
+nc -zv 127.0.0.1 2222
+```
+
+#### 3. Run Ansible playbook
+```bash
+cd /home/julian/homelab/bsd_router_test
+ansible-playbook -i pxe_boot_config/inventory.ini pxe_boot_config/playbook.yml
+```
+
+#### 4. Create router disk
+```bash
+qemu-img create -f qcow2 freebsd_router.qcow2 20G
+```
+
+#### 5. Start the router emulator (terminal 2)
+```bash
+qemu-system-x86_64 -M q35 -m 2048 \
+  -boot n \
+  -drive if=virtio,file=freebsd_router.qcow2,format=qcow2 \
+  -netdev user,id=wan,hostfwd=tcp::2200-:22,hostfwd=udp::53-:53 \
+  -device e1000,netdev=wan,mac=52:54:00:12:34:01 \
+  -netdev user,id=lan \
+  -device e1000,netdev=lan,mac=52:54:00:12:34:02 \
+  -netdev socket,id=mgmt,connect=127.0.0.1:12345 \
+  -device e1000,netdev=mgmt,mac=52:54:00:12:34:03 \
+  -serial file:host_output_router.log \
+  -nographic -daemonize
+```
+
+#### 6. Monitor router boot
+```bash
+tail -f host_output_router.log
+```
+
+#### 7. Verify router responsiveness (after ~2-3 minutes)
+```bash
+nc -zv 127.0.0.1 2200  # SSH port
+nslookup google.com 127.0.0.1:53  # DNS port
+```
+
+#### 8. Clean up
+```bash
+pkill -f 'qemu-system'
+rm testing_key testing_key.pub
+rm freebsd_router.qcow2
+rm host_output_router.log
+```
+
+### Phase 7: Network Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Host Machine (Linux)                       │
+│                                                                   │
+│  eth0 (Host Network)                                            │
+│    │                                                             │
+│    ├─ Port 2222 ──────────────> [Pi QEMU (ARM64)]               │
+│    │  SSH to Ansible              Port 22                        │
+│    │                                                             │
+│    ├─ Port 2200 ──────────────> [Router QEMU (x86-64)]          │
+│    │  SSH for testing             em0 (WAN)                      │
+│    │                              + Port 53 -> DNS                │
+│    │                                                             │
+│    └─ Socket Localhost:12345                                    │
+│       (Virtual Wire)                                             │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+         │                                │                            
+         │                                │                            
+         └────────────────────┬───────────┘                            
+                              │                                         
+                    ┌─────────▼──────────┐                             
+                    │  Virtual Network   │                             
+                    │  127.0.0.1:12345   │                             
+                    └────────┬───────────┘                             
+                             │                                         
+       ┌─────────────────────┼──────────────────────┐                 
+       │                     │                      │                 
+┌──────▼──────────┐  ┌───────▼────────┐  ┌────────▼─────────┐       
+│  Pi Emulator    │  │  Router QEMU   │  │  Router Disk     │       
+│  (Debian ARM64) │  │  (FreeBSD x86) │  │  (QCOW2 20GB)    │       
+│                 │  │                │  │                  │       
+│ eth0: DHCP      │  │ em0: DHCP WAN  │  │ /var/log/        │       
+│ eth1: 127.0.0.1 │  │ em1: LAN       │  │ /usr/local/etc/  │       
+│ (management)    │  │ em2: MGMT      │  │                  │       
+│                 │  │                │  │                  │       
+│ Services:       │  │ Services:      │  │                  │       
+│ - TFTP          │  │ - Routing      │  │                  │       
+│ - NFS           │  │ - dnscrypt-    │  │                  │       
+│ - dnsmasq       │  │   proxy        │  │                  │       
+│ - DHCP          │  │ - dnsmasq      │  │                  │       
+│                 │  │ - pf (kernel)  │  │                  │       
+└─────────────────┘  └────────────────┘  └──────────────────┘       
+```
+
+**Network Connectivity:**
+- **Pi to Router:** Socket localhost:12345 (virtual wire)
+- **Host to Pi:** Port 2222 (Ansible SSH)
+- **Host to Router:** Port 2200 (test SSH), Port 53 (DNS queries)
+- **Router WAN:** QEMU user-mode network (can reach outside via host NAT)
+- **Router LAN:** Isolated user-mode network (for future client testing)
+- **Router Persistence:** QCOW2 disk for logs and configs
+
+### Phase 8: Separation of Concerns
+
+**`router_config/setup.sh` (Physical Deployment)**
+- Run manually on the physical Optiplex after FreeBSD installation
+- Handles one-time configuration tasks
+- Independent of PXE/NFS infrastructure
+- Reusable for maintenance and updates
+
+**`scripts/run_test_loop.sh` (Emulated Testing)**
+- Orchestrates the full QEMU emulation flow
+- Stages router configs via Ansible playbook
+- Embeds rc.local logic (functions from setup.sh adapted for boot automation)
+- Isolated from production-like deployment
+
+**`pxe_boot_config/rc.local` (Router Initialization)**
+- Runs automatically on boot in the emulated environment
+- Calls functions similar to `router_config/setup.sh` (create user, install packages, copy configs, start services)
+- Tests the full automation pipeline
+- Not used on physical deployment (where `setup.sh` is run manually)
+
+### Next Steps
+
+1. **Review the network diagram** to confirm the three-interface design meets your requirements
+2. **Run manual QEMU commands** (Phase 6) one terminal at a time to validate each step
+3. **Once manual testing succeeds,** generate `scripts/run_test_loop.sh` and `scripts/prepare_images.sh` for full automation
+4. **Integration:** The `pxe_boot_config/rc.local` file will need to embed automated setup logic adapted from `router_config/setup.sh` (to be created)

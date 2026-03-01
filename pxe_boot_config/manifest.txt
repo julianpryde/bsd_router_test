@@ -1,4 +1,0 @@
-dnsmasq.conf
-interfaces
-loader.conf
-setup.sh

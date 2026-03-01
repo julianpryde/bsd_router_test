@@ -12,9 +12,10 @@
 1. **Deploy configuration files**:
    ```bash
    cd debian-pxe-boot
-   sudo ./setup.sh <remote_ip>
+   ansible-galaxy collection install -r requirements.yml
+   ansible-playbook playbook.yml
    ```
-   Replace `<remote_ip>` with the IP of the host serving `base.txz` and `kernel.txz` over HTTP on port 8080.
+   Ensure `inventory.ini` is updated with the host serving `base.txz` and `kernel.txz` over HTTP on port 8080.
 
 2. **Verify network configuration**:
    ```bash
@@ -126,7 +127,7 @@ sudo umount /mnt/test
 
 ### Method 4: Full PXE Boot Test
 
-**IMPORTANT**: This requires FreeBSD boot files in `/srv/tftp/` (pxeboot only) and `/srv/nfs/freebsd/` (boot directory) on the Debian VM (created by setup.sh).
+**IMPORTANT**: This requires FreeBSD boot files in `/srv/tftp/` (pxeboot only) and `/srv/nfs/freebsd/` (boot directory) on the Debian VM (created by the Ansible playbook or manual setup).
 
 1. **Configure router BIOS/UEFI**:
    - Set boot order: Network boot first

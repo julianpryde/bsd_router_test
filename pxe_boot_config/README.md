@@ -59,19 +59,11 @@ The playbook will:
 - Start and enable dnsmasq and NFS services
 - Verify the installation
 
-## Alternative - Shell Script
-
-If you prefer a simple shell script, you can use the legacy setup script:
-
-```bash
-sudo bash setup.sh <remote_ip>
-```
-
-Replace `<remote_ip>` with the IP of the host serving the FreeBSD release files (`base.txz` and `kernel.txz`) over HTTP on port 8080.
+The legacy shell-script workflow has been removed to keep deployment paths unambiguous for coding agents and operators.
 
 ## Manual Installation (Alternative)
 
-If you prefer to configure manually instead of using `setup.sh`, follow these steps:
+If you prefer to configure manually instead of using Ansible, follow these steps:
 
 ### Install Required Packages
 ```bash
@@ -119,7 +111,6 @@ sudo exportfs -ra
 - `inventory.ini` - Ansible inventory file with configuration variables
 - `requirements.yml` - Ansible collection requirements
 - `ansible.cfg` - Ansible configuration file
-- `setup.sh` - Legacy shell script for automated setup
 - `interfaces` - Network configuration for Debian VM
 - `dnsmasq.conf` - DHCP and TFTP server configuration
 - `loader.conf` - FreeBSD boot loader configuration (NFS root boot)
@@ -148,7 +139,7 @@ ls -la /srv/tftp/
 
 ## FreeBSD Release Files
 
-The setup script downloads FreeBSD release files (`base.txz` and `kernel.txz`) from the remote HTTP server and sets up an **NFS-based PXE boot environment** that automatically installs FreeBSD to the local hard drive.
+The Ansible playbook downloads FreeBSD release files (`base.txz` and `kernel.txz`) from the remote HTTP server and sets up an **NFS-based PXE boot environment** that automatically installs FreeBSD to the local hard drive.
 
 ### Required Files
 
@@ -158,7 +149,7 @@ The setup script downloads FreeBSD release files (`base.txz` and `kernel.txz`) f
 
 ### Verifying Boot Files
 
-After running setup.sh, verify the files are in place:
+After running the Ansible playbook (or completing manual setup), verify the files are in place:
 
 ```bash
 # TFTP directory (pxeboot only)

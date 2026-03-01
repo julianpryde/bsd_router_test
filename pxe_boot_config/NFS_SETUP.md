@@ -41,9 +41,9 @@ Debian/Linux PXE Server (192.168.100.1)
 3. **NFS** (nfs-kernel-server) exports:
    - `/srv/nfs/freebsd` - Contains boot files, loader, and kernel
 
-## Setup Script
+## Automated Setup (Ansible)
 
-The `setup.sh` script automatically:
+The `playbook.yml` Ansible workflow automatically:
 - Installs `nfs-kernel-server`
 - Creates `/srv/nfs/freebsd` directory
 - Downloads `base.txz` and `kernel.txz` from the remote HTTP server and extracts them to `/srv/nfs/freebsd`
@@ -71,7 +71,7 @@ sudo mkdir -p /srv/nfs/freebsd
 sudo tar -xf /path/to/base.txz -C /srv/nfs/freebsd/
 sudo tar -xf /path/to/kernel.txz -C /srv/nfs/freebsd/
 ```
-If you are using the automated flow, `setup.sh` will download the release files from the HTTP server instead of copying from local disk.
+If you are using the automated flow, the Ansible playbook downloads the release files from the HTTP server instead of copying from local disk.
 
 ### 4. Configure NFS Export
 
