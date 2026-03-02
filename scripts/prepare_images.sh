@@ -125,19 +125,40 @@ prepare_pi_image_manual() {
   CLOUD_INIT_DIR="$IMAGES_DIR/cloud-init"
   mkdir -p "$CLOUD_INIT_DIR"
   
+  # Read the actual public key from testing_key.pub
+  if [ ! -f "$TEST_KEY_PUB" ]; then
+    log_error "SSH public key not found at $TEST_KEY_PUB"
+    return 1
+  fi
+  
+  SSH_KEY_CONTENT=$(cat "$TEST_KEY_PUB")
+  
   cat > "$CLOUD_INIT_DIR/user-data" <<EOF
 #cloud-config
+ssh_pwauth: false
+disable_root: false
 users:
   - name: root
+    lock_passwd: true
     ssh_authorized_keys:
-      - $(cat "$TEST_KEY_PUB")
+      - $SSH_KEY_CONTENT
 
 packages:
   - openssh-server
+  - openssh-client
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-cloud-init.conf
+    content: |
+      PermitRootLogin yes
+      PubkeyAuthentication yes
+      PasswordAuthentication no
+    permissions: '0644'
 
 runcmd:
   - systemctl enable ssh
-  - systemctl start ssh
+  - systemctl restart ssh
+  - echo "Cloud-init SSH setup completed at \$(date)" >> /var/log/cloud-init.log
 
 EOF
   
@@ -146,29 +167,32 @@ instance-id: qemu-pi-test
 local-hostname: pxe-server
 EOF
 
-  # Create cloud-init ISO
-  if command -v cloud-localds >/dev/null 2>&1; then
-    cloud-localds "$CLOUD_INIT_DIR/seed.img" "$CLOUD_INIT_DIR/user-data" "$CLOUD_INIT_DIR/meta-data"
-    log_success "Created cloud-init seed image at $CLOUD_INIT_DIR/seed.img"
-    log_warn "When booting the Pi, add this to qemu command:"
-    log_warn "  -drive file=$CLOUD_INIT_DIR/seed.img,if=virtio,format=raw"
+  log_info "Creating cloud-init ISO seed image..."
+  
+  if command -v mkisofs >/dev/null 2>&1; then
+    MKISOFS_CMD="mkisofs"
   elif command -v genisoimage >/dev/null 2>&1; then
-    genisoimage -output "$CLOUD_INIT_DIR/seed.img" \
-      -volid cidata -joliet -rock \
-      "$CLOUD_INIT_DIR/user-data" "$CLOUD_INIT_DIR/meta-data"
-    log_success "Created cloud-init seed image with genisoimage"
-    log_warn "When booting the Pi, add this to qemu command:"
-    log_warn "  -drive file=$CLOUD_INIT_DIR/seed.img,if=virtio,format=raw"
+    MKISOFS_CMD="genisoimage"
   else
-    log_error "Neither cloud-localds nor genisoimage found"
-    log_error "Install cloud-image-utils or genisoimage:"
-    echo "  sudo apt-get install cloud-image-utils"
-    echo "  # OR"
+    log_error "Neither mkisofs nor genisoimage found. Install genisoimage."
     echo "  sudo apt-get install genisoimage"
     return 1
   fi
   
-  return 0
+  "$MKISOFS_CMD" -output "$CLOUD_INIT_DIR/seed.img" \
+    -volid cidata -joliet -rock \
+    -input-charset utf-8 \
+    "$CLOUD_INIT_DIR/user-data" \
+    "$CLOUD_INIT_DIR/meta-data" 2>/dev/null
+  
+  if [ $? -eq 0 ]; then
+    log_success "Created cloud-init seed image with $MKISOFS_CMD"
+    log_info "SSH key injected from $TEST_KEY_PUB"
+    return 0
+  else
+    log_error "Failed to create cloud-init seed image"
+    return 1
+  fi
 }
 
 # Verify images
