@@ -2,17 +2,12 @@
 # Prepare QEMU base images for automated testing
 # - Injects SSH keys for Ansible access
 # - Enables SSH on first boot
-# - Uses virt-customize to modify image before booting
-#
-# Troubleshooting:
-# If virt-customize fails with supermin errors:
-#   1. Try: export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
-#   2. Run: libguestfs-test-tool
-#   3. The script will fall back to cloud-init method automatically
+# - Uses cloud-init to configure the image on first boot
 #
 # Requirements:
-#   - libguestfs-tools (for virt-customize)
-#   - OR cloud-image-utils (for cloud-init fallback)
+#   - genisoimage (for creating cloud-init seed image)
+#     Install: sudo apt-get install genisoimage
+#   - wget (for downloading base images)
 
 set -e
 
@@ -60,68 +55,36 @@ generate_ssh_keys() {
   log_success "SSH keys generated"
 }
 
-# Prepare Pi (Debian ARM64) image
-prepare_pi_image() {
+# Download Pi base image
+download_pi_image() {
   PI_IMAGE="$IMAGES_DIR/rpi_base.qcow2"
   PI_SOURCE="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-arm64.qcow2"
 
-  if [ ! -f "$PI_IMAGE" ]; then
-    log_info "Downloading Debian ARM64 image for Pi emulation..."
-    log_warn "This is a large file (~400 MB). First download only."
-    
-    if ! command -v wget >/dev/null 2>&1; then
-      log_error "wget not found. Install wget or download manually:"
-      echo "  wget -O $PI_IMAGE $PI_SOURCE"
-      exit 1
-    fi
-
-    wget -O "$PI_IMAGE" "$PI_SOURCE" || {
-      log_error "Failed to download Pi image"
-      exit 1
-    }
-    log_success "Pi image downloaded"
-  else
+  if [ -f "$PI_IMAGE" ]; then
     log_info "Pi image already exists at $PI_IMAGE"
+    return 0
   fi
 
-  # Check if virt-customize is available
-  if ! command -v virt-customize >/dev/null 2>&1; then
-    log_error "virt-customize not found. Install libguestfs-tools:"
-    echo "  sudo apt-get install libguestfs-tools"
-    log_warn "Falling back to cloud-init method..."
-    prepare_pi_image_manual
-    return $?
-  fi
-
-  log_info "Customizing Pi image with SSH and keys..."
-  log_warn "This may take several minutes on first run..."
+  log_info "Downloading Debian ARM64 cloud image for Pi emulation..."
+  log_warn "This is a large file (~400 MB). First download only."
   
-  # Set libguestfs backend to direct mode (works better for non-root users)
-  export LIBGUESTFS_BACKEND=direct
-  
-  # Enable debugging if the operation fails
-  if ! virt-customize -a "$PI_IMAGE" \
-    --install openssh-server \
-    --run-command 'systemctl enable ssh' \
-    --ssh-inject root:file:"$TEST_KEY_PUB" \
-    2>/tmp/virt-customize-error.log
-  then
-    log_error "Failed to customize Pi image"
-    log_error "Trying alternative method: manual cloud-init setup"
-    
-    # Alternative: Use cloud-init to inject SSH key
-    prepare_pi_image_manual
-    return $?
+  if ! command -v wget >/dev/null 2>&1; then
+    log_error "wget not found. Install wget or download manually:"
+    echo "  wget -O $PI_IMAGE $PI_SOURCE"
+    return 1
   fi
 
-  log_success "Pi image customized with SSH and test keys"
+  wget -O "$PI_IMAGE" "$PI_SOURCE" || {
+    log_error "Failed to download Pi image"
+    return 1
+  }
+  log_success "Pi image downloaded"
 }
 
-# Fallback method using cloud-init
-prepare_pi_image_manual() {
-  log_info "Setting up image with cloud-init (alternative method)..."
+# Create cloud-init configuration
+create_cloud_init_config() {
+  log_info "Creating cloud-init configuration..."
   
-  # Create cloud-init user-data
   CLOUD_INIT_DIR="$IMAGES_DIR/cloud-init"
   mkdir -p "$CLOUD_INIT_DIR"
   
@@ -133,6 +96,7 @@ prepare_pi_image_manual() {
   
   SSH_KEY_CONTENT=$(cat "$TEST_KEY_PUB")
   
+  # Create user-data with SSH key injection
   cat > "$CLOUD_INIT_DIR/user-data" <<EOF
 #cloud-config
 ssh_pwauth: false
@@ -162,37 +126,50 @@ runcmd:
 
 EOF
   
+  # Create meta-data
   cat > "$CLOUD_INIT_DIR/meta-data" <<EOF
-instance-id: qemu-pi-test
+instance-id: qemu-pi-test-$(date +%s)
 local-hostname: pxe-server
 EOF
 
+  log_success "Cloud-init configuration created"
+  log_info "SSH key injected: ${SSH_KEY_CONTENT%% *}..."
+}
+
+# Create cloud-init seed image
+create_cloud_init_seed() {
+  log_info "Creating cloud-init seed image..."
+  
+  CLOUD_INIT_DIR="$IMAGES_DIR/cloud-init"
+  
+  # Try cloud-localds first (cleaner method)
   if command -v cloud-localds >/dev/null 2>&1; then
     log_info "Using cloud-localds to create seed image..."
-    cloud-localds "$CLOUD_INIT_DIR/seed.img" "$CLOUD_INIT_DIR/user-data" "$CLOUD_INIT_DIR/meta-data"
+    cloud-localds "$CLOUD_INIT_DIR/seed.img" \
+      "$CLOUD_INIT_DIR/user-data" \
+      "$CLOUD_INIT_DIR/meta-data" 2>/dev/null
+    
     if [ $? -eq 0 ]; then
-      log_success "Created cloud-init seed image with cloud-localds"
-      log_info "SSH key injected from $TEST_KEY_PUB"
+      log_success "Cloud-init seed image created with cloud-localds"
       return 0
     else
-      log_error "Failed to create cloud-init seed image with cloud-localds"
-      # Fall through to mkisofs attempt
+      log_warn "cloud-localds failed, trying mkisofs/genisoimage..."
     fi
   fi
 
-  log_info "Creating cloud-init ISO seed image with mkisofs/genisoimage..."
-  
+  # Fall back to mkisofs/genisoimage
   if command -v mkisofs >/dev/null 2>&1; then
     MKISOFS_CMD="mkisofs"
   elif command -v genisoimage >/dev/null 2>&1; then
     MKISOFS_CMD="genisoimage"
   else
-    log_error "Neither mkisofs nor genisoimage found. Install genisoimage."
-    echo "  sudo apt-get install genisoimage"
+    log_error "No ISO creation tool found. Install one of:"
+    echo "  sudo apt-get install cloud-image-utils  # for cloud-localds"
+    echo "  sudo apt-get install genisoimage         # for genisoimage"
     return 1
   fi
   
-  # Create a temporary directory for ISO content to ensure correct filenames
+  # Create a temporary directory for ISO content
   ISO_BUILD_DIR=$(mktemp -d)
   cp "$CLOUD_INIT_DIR/user-data" "$ISO_BUILD_DIR/user-data"
   cp "$CLOUD_INIT_DIR/meta-data" "$ISO_BUILD_DIR/meta-data"
@@ -202,11 +179,11 @@ EOF
     -input-charset utf-8 \
     "$ISO_BUILD_DIR" 2>/dev/null
   
+  result=$?
   rm -rf "$ISO_BUILD_DIR"
   
-  if [ $? -eq 0 ]; then
-    log_success "Created cloud-init seed image with $MKISOFS_CMD"
-    log_info "SSH key injected from $TEST_KEY_PUB"
+  if [ $result -eq 0 ]; then
+    log_success "Cloud-init seed image created with $MKISOFS_CMD"
     return 0
   else
     log_error "Failed to create cloud-init seed image"
@@ -214,12 +191,17 @@ EOF
   fi
 }
 
-# Verify images
-verify_images() {
-  log_info "Verifying images..."
+# Verify all components
+verify_setup() {
+  log_info "Verifying setup..."
 
   if [ ! -f "$IMAGES_DIR/rpi_base.qcow2" ]; then
     log_error "Pi image not found at $IMAGES_DIR/rpi_base.qcow2"
+    return 1
+  fi
+
+  if [ ! -f "$IMAGES_DIR/cloud-init/seed.img" ]; then
+    log_error "Cloud-init seed image not found"
     return 1
   fi
 
@@ -228,32 +210,55 @@ verify_images() {
     return 1
   fi
 
-  log_success "All images and keys verified"
+  # Check key permissions
+  KEY_PERMS=$(stat -c %a "$TEST_KEY" 2>/dev/null || stat -f %A "$TEST_KEY")
+  if [ "$KEY_PERMS" != "600" ]; then
+    log_warn "Fixing SSH key permissions..."
+    chmod 600 "$TEST_KEY"
+  fi
+
+  log_success "All components verified"
   
   # Show file info
-  log_info "Pi image: $(du -h "$IMAGES_DIR/rpi_base.qcow2" | cut -f1)"
-  log_info "Test key: $TEST_KEY (permissions: $(stat -c %a "$TEST_KEY"))"
+  log_info "Pi base image: $(du -h "$IMAGES_DIR/rpi_base.qcow2" | cut -f1)"
+  log_info "Cloud-init seed: $(du -h "$IMAGES_DIR/cloud-init/seed.img" | cut -f1)"
+  log_info "SSH private key: $TEST_KEY (permissions: $(stat -c %a "$TEST_KEY" 2>/dev/null || stat -f %A "$TEST_KEY"))"
   
-  # Check if cloud-init was used
-  if [ -f "$IMAGES_DIR/cloud-init/seed.img" ]; then
-    log_warn "Cloud-init seed image detected: $IMAGES_DIR/cloud-init/seed.img"
-    log_warn "Add this parameter when starting the Pi QEMU:"
-    echo "  -drive file=$IMAGES_DIR/cloud-init/seed.img,if=virtio,format=raw"
-  fi
+  echo ""
+  log_success "=== Ready to start Pi emulator ==="
+  echo ""
+  echo "Start the Pi QEMU with:"
+  echo ""
+  echo "  qemu-system-aarch64 \\"
+  echo "    -M virt -cpu cortex-a57 -m 2048 \\"
+  echo "    -drive if=virtio,file=$IMAGES_DIR/rpi_base.qcow2,format=qcow2 \\"
+  echo "    -drive file=$IMAGES_DIR/cloud-init/seed.img,if=virtio,format=raw \\"
+  echo "    -netdev user,id=wan,hostfwd=tcp::2222-:22 \\"
+  echo "    -device virtio-net,netdev=wan \\"
+  echo "    -netdev socket,id=lan,listen=:12345 \\"
+  echo "    -device virtio-net,netdev=lan \\"
+  echo "    -nographic -serial mon:stdio"
+  echo ""
+  log_info "Wait 60-90 seconds for cloud-init to complete, then test with:"
+  echo "  ssh -i $TEST_KEY -p 2222 root@127.0.0.1"
+  echo ""
 }
 
 # Main execution
 main() {
   log_info "=== QEMU Test Environment Image Preparation ==="
+  log_info "Using cloud-init for image configuration"
   log_info "Project root: $PROJECT_ROOT"
   log_info "Images directory: $IMAGES_DIR"
+  echo ""
   
-  generate_ssh_keys
-  prepare_pi_image
-  verify_images
+  generate_ssh_keys || exit 1
+  download_pi_image || exit 1
+  create_cloud_init_config || exit 1
+  create_cloud_init_seed || exit 1
+  verify_setup || exit 1
   
   log_success "=== Image preparation complete ==="
-  log_info "Ready to run manual test commands from Phase 6"
 }
 
 main "$@"
