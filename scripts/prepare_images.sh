@@ -167,7 +167,20 @@ instance-id: qemu-pi-test
 local-hostname: pxe-server
 EOF
 
-  log_info "Creating cloud-init ISO seed image..."
+  if command -v cloud-localds >/dev/null 2>&1; then
+    log_info "Using cloud-localds to create seed image..."
+    cloud-localds "$CLOUD_INIT_DIR/seed.img" "$CLOUD_INIT_DIR/user-data" "$CLOUD_INIT_DIR/meta-data"
+    if [ $? -eq 0 ]; then
+      log_success "Created cloud-init seed image with cloud-localds"
+      log_info "SSH key injected from $TEST_KEY_PUB"
+      return 0
+    else
+      log_error "Failed to create cloud-init seed image with cloud-localds"
+      # Fall through to mkisofs attempt
+    fi
+  fi
+
+  log_info "Creating cloud-init ISO seed image with mkisofs/genisoimage..."
   
   if command -v mkisofs >/dev/null 2>&1; then
     MKISOFS_CMD="mkisofs"
@@ -179,11 +192,17 @@ EOF
     return 1
   fi
   
+  # Create a temporary directory for ISO content to ensure correct filenames
+  ISO_BUILD_DIR=$(mktemp -d)
+  cp "$CLOUD_INIT_DIR/user-data" "$ISO_BUILD_DIR/user-data"
+  cp "$CLOUD_INIT_DIR/meta-data" "$ISO_BUILD_DIR/meta-data"
+
   "$MKISOFS_CMD" -output "$CLOUD_INIT_DIR/seed.img" \
     -volid cidata -joliet -rock \
     -input-charset utf-8 \
-    "$CLOUD_INIT_DIR/user-data" \
-    "$CLOUD_INIT_DIR/meta-data" 2>/dev/null
+    "$ISO_BUILD_DIR" 2>/dev/null
+  
+  rm -rf "$ISO_BUILD_DIR"
   
   if [ $? -eq 0 ]; then
     log_success "Created cloud-init seed image with $MKISOFS_CMD"
