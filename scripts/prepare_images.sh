@@ -5,9 +5,11 @@
 # - Uses cloud-init to configure the image on first boot
 #
 # Requirements:
-#   - genisoimage (for creating cloud-init seed image)
-#     Install: sudo apt-get install genisoimage
+#   - cloud-image-utils or genisoimage (for creating cloud-init seed image)
+#     Install: sudo apt-get install cloud-image-utils
+#     Or: sudo apt-get install genisoimage
 #   - wget (for downloading base images)
+#   - qemu-system-aarch64 (for running ARM64 VMs)
 
 set -e
 
@@ -58,16 +60,16 @@ generate_ssh_keys() {
 # Download Pi base image
 download_pi_image() {
   PI_IMAGE="$IMAGES_DIR/rpi_base.qcow2"
-  PI_SOURCE="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-arm64.qcow2"
+  PI_SOURCE="https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-arm64.img"
 
   if [ -f "$PI_IMAGE" ]; then
     log_info "Pi image already exists at $PI_IMAGE"
     return 0
   fi
 
-  log_info "Downloading Debian ARM64 cloud image for Pi emulation..."
-  log_warn "This is a large file (~400 MB). First download only."
-  
+  log_info "Downloading Ubuntu 22.04 ARM64 cloud image for QEMU emulation..."
+  log_warn "This is a large file (~270 MB). First download only."
+
   if ! command -v wget >/dev/null 2>&1; then
     log_error "wget not found. Install wget or download manually:"
     echo "  wget -O $PI_IMAGE $PI_SOURCE"
@@ -106,6 +108,7 @@ users:
     lock_passwd: true
     ssh_authorized_keys:
       - $SSH_KEY_CONTENT
+    shell: /bin/bash
 
 packages:
   - openssh-server
@@ -121,7 +124,7 @@ write_files:
 
 runcmd:
   - systemctl enable ssh
-  - systemctl restart ssh
+  - systemctl start ssh
   - echo "Cloud-init SSH setup completed at \$(date)" >> /var/log/cloud-init.log
 
 EOF
@@ -231,16 +234,38 @@ verify_setup() {
   echo ""
   echo "  qemu-system-aarch64 \\"
   echo "    -M virt -cpu cortex-a57 -m 2048 \\"
+  echo "    -boot c \\"
   echo "    -drive if=virtio,file=$IMAGES_DIR/rpi_base.qcow2,format=qcow2 \\"
-  echo "    -drive file=$IMAGES_DIR/cloud-init/seed.img,if=virtio,format=raw \\"
+  echo "    -drive file=$IMAGES_DIR/cloud-init/seed.img,media=cdrom \\"
+  echo "    -netdev user,id=wan,hostfwd=tcp::2222-:22 \\"
+  echo "    -device virtio-net,netdev=wan \\"
+  echo "    -netdev socket,id=lan,listen=:12345 \\"
+  echo "    -device virtio-net,netdev=lan"
+  echo ""
+  log_info "Or with graphical output (for debugging):"
+  echo "  qemu-system-aarch64 \\"
+  echo "    -M virt -cpu cortex-a57 -m 2048 \\"
+  echo "    -boot c \\"
+  echo "    -drive if=virtio,file=$IMAGES_DIR/rpi_base.qcow2,format=qcow2 \\"
+  echo "    -drive file=$IMAGES_DIR/cloud-init/seed.img,media=cdrom \\"
   echo "    -netdev user,id=wan,hostfwd=tcp::2222-:22 \\"
   echo "    -device virtio-net,netdev=wan \\"
   echo "    -netdev socket,id=lan,listen=:12345 \\"
   echo "    -device virtio-net,netdev=lan \\"
-  echo "    -nographic -serial mon:stdio"
+  echo "    -serial mon:stdio"
   echo ""
-  log_info "Wait 60-90 seconds for cloud-init to complete, then test with:"
+  log_info "Wait 120+ seconds for cloud-init to complete and SSH to be ready."
+  log_info "Test with:"
   echo "  ssh -i $TEST_KEY -p 2222 root@127.0.0.1"
+  echo ""
+  log_warn "Troubleshooting:"
+  echo "- If SSH connection times out: The SSH port may be listening but hanging on banner exchange"
+  echo "- This can occur when using cloud images on QEMU's 'virt' machine type in WSL2"
+  echo "- Workarounds:"
+  echo "  1. Try booting with graphical output (-serial mon:stdio) to see actual boot logs"
+  echo "  2. Use 'screen' or 'minicom' to capture detailed serial output"
+  echo "  3. Consider switching to a different ARM64 image or using native Linux with KVM"
+  echo "  4. Try connecting via telnet first: telnet 127.0.0.1 2222"
   echo ""
 }
 
