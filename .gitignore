@@ -20,3 +20,5 @@ desktop.ini
 *~
 .AppleDouble
 .LSOverride
+
+pxe_boot_config/logs/*
